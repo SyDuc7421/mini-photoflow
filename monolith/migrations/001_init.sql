@@ -35,3 +35,4 @@ CREATE TABLE IF NOT EXISTS comments (
     text TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS comments_post_idx ON comments (post_id, created_at, id);
