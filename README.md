@@ -1,68 +1,54 @@
-# Photo-share: Monolith vs Microservice
+# mini-photoflow
 
-Dự án học tập: build **cùng một app share photo** (REST API) hai lần, một bản monolith và một bản microservice (gRPC nội bộ), rồi so sánh hai bản.
+App share photo nhỏ (đăng ký/đăng nhập, đăng ảnh, feed, follow, like, comment) được build **hai lần**: một bản monolith và một bản microservice. Mục đích là học và so sánh hai cách tổ chức kiến trúc trên cùng một app. Chỉ có REST API, không có GUI, không dành cho production.
 
-Chức năng: đăng ký/đăng nhập, đăng ảnh, xem feed, follow, like, comment. Chỉ có API, không có GUI, không dành cho production.
+Công nghệ: Go, Postgres, MinIO, Docker Compose; bản microservice thêm gRPC và NATS.
 
-## Bốn điều muốn cảm nhận khi so sánh
+## Repo có gì
 
-1. **Data ownership**: 1 DB + `JOIN` so với mỗi service một DB riêng.
-2. **Giao tiếp**: gọi hàm so với gRPC đồng bộ so với event (NATS).
-3. **Lỗi từng phần**: một phần chết thì phần còn lại có sống không.
-4. **Chạy và deploy**: 1 container so với nhiều container.
+```
+api/openapi.yaml          hợp đồng REST dùng chung cho cả hai bản
+tests/contract/           bộ test e2e, chạy được trên cả hai bản bằng BASE_URL
+internal/                 package Go dùng chung (apierr, jwtutil)
+docs/                     SPEC, ARCHITEC, sơ đồ HTML, thiết kế và kế hoạch
+monolith/                 bản monolith
+microservices/            bản microservice
+```
 
-## Trạng thái
+## Đọc gì ở đâu
 
-| Phần | Trạng thái |
+| Muốn biết | Đọc |
 |---|---|
-| Thiết kế (`docs/superpowers/specs/`) | xong, đã duyệt |
-| Kế hoạch (`docs/superpowers/plans/`) | xong, 12 task |
-| Task 0: hợp đồng API + bộ test hợp đồng | **xong** |
-| Task 1–4: monolith | chưa làm |
-| Task 5–8: microservice, feed bước 1 (gRPC) | chưa làm |
-| Task 9–10: feed bước 2 (event qua NATS) | chưa làm |
-| Task 11: số liệu so sánh | chưa làm |
+| App phải làm gì, các quy tắc và tiêu chí chấp nhận | [docs/SPEC.md](docs/SPEC.md) |
+| Hai bản được tổ chức thế nào và so sánh ra sao | [docs/ARCHITEC.md](docs/ARCHITEC.md) |
+| Nhìn kiến trúc bằng sơ đồ (mở trong trình duyệt) | [docs/architecture.html](docs/architecture.html) |
+| Danh sách route, request và response | [api/openapi.yaml](api/openapi.yaml) |
+| Lý do thiết kế và kế hoạch triển khai | `docs/superpowers/specs/`, `docs/superpowers/plans/` |
 
-Hiện chưa có server nào chạy được; mục "Chạy" của từng bản sẽ thêm khi các task tương ứng xong.
+## Tiến độ
 
-## Tài liệu
+Kế hoạch gồm 12 task (Task 0 đến Task 11).
 
-- [docs/SPEC.md](docs/SPEC.md): đặc tả chức năng, ràng buộc và tiêu chí chấp nhận.
-- [docs/ARCHITEC.md](docs/ARCHITEC.md): kiến trúc của hai bản và cách so sánh.
-- [docs/architecture.html](docs/architecture.html): sơ đồ tương tác (mở bằng trình duyệt), có thể bấm tắt service để xem phần nào còn chạy.
-- [api/openapi.yaml](api/openapi.yaml): hợp đồng REST dùng chung cho cả hai bản.
+- Xong: Task 0, tức hợp đồng API và bộ test hợp đồng.
+- Chưa làm: monolith (Task 1–4), microservice (Task 5–10), README so sánh có số liệu (Task 11).
 
-## Cấu trúc repo
+Hiện chưa có server nào chạy được.
 
-```
-api/openapi.yaml          # hợp đồng REST + bảng mã lỗi
-internal/apierr/          # định dạng lỗi JSON dùng chung
-internal/jwtutil/         # ký và verify JWT
-tests/contract/           # test e2e, chạy bằng BASE_URL
-docs/superpowers/         # thiết kế và kế hoạch
-monolith/                 # (Task 1-4)
-microservices/            # (Task 5-10)
-```
+## Bắt đầu
 
-## Chạy test
-
-Yêu cầu Go 1.22+.
+Yêu cầu: Go 1.22+. Docker và Docker Compose sẽ cần khi có hai bản chạy được.
 
 ```bash
-# test đơn vị
+git clone https://github.com/SyDuc7421/mini-photoflow.git
+cd mini-photoflow
+
+# test đơn vị các package dùng chung
 go test ./internal/...
 
 # test hợp đồng: cần một server đang chạy tại BASE_URL
 BASE_URL=http://localhost:8080 go test ./tests/contract/... -v
 ```
 
-Khi chưa có server, toàn bộ test hợp đồng fail với `connection refused`, đó là trạng thái đúng ở Task 0. Cùng một bộ test sẽ chạy trên cả hai bản; hai bản cùng qua bộ test là bằng chứng chúng tương đương.
+Khi chưa có server, test hợp đồng fail với `connection refused`; đó là trạng thái đúng ở thời điểm này. Cùng một bộ test sẽ chạy trên monolith và microservice bằng cách đổi `BASE_URL`.
 
-## Quy ước API (tóm tắt)
-
-- Auth: `Authorization: Bearer <jwt>`, token sống 24 giờ.
-- Lỗi: `{"error":{"code":"...","message":"..."}}` với mã `bad_request`, `unauthorized`, `not_found`, `conflict`, `payload_too_large`, `unavailable`.
-- Caption tối đa 500 ký tự, ảnh tối đa 5 MiB.
-- Follow/unfollow/like/unlike idempotent.
-
-Chi tiết đầy đủ nằm trong `api/openapi.yaml`.
+Lệnh chạy từng bản (`docker compose up`) sẽ được thêm vào đây khi bản tương ứng xong.
