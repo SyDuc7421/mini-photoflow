@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kiến trúc Photo-share</title>
+<style>
+:root {
+  --bg: #f7f6f2; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a64; --line: #c9c6bb;
+  --mono: #2f6fb3; --mono-bg: #e3eefa;
+  --svc: #2d7d5a; --svc-bg: #e0f1e8;
+  --db: #a16a1f; --db-bg: #f8eed9;
+  --bus: #7a4fb5; --bus-bg: #ece3f7;
+  --gw: #555; --gw-bg: #ecebe6;
+  --down: #c0392b; --down-bg: #fbe3df; --ok: #2d7d5a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161715; --panel: #1f201e; --ink: #ecebe6; --muted: #9a998f; --line: #484840;
+    --mono: #6fa8e0; --mono-bg: #1c2b3b;
+    --svc: #5cc296; --svc-bg: #1b2f26;
+    --db: #e0aa57; --db-bg: #38301c;
+    --bus: #b894e8; --bus-bg: #2b2339;
+    --gw: #aaa; --gw-bg: #2a2a27;
+    --down: #ef7a6c; --down-bg: #3b1f1b; --ok: #5cc296;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161715; --panel: #1f201e; --ink: #ecebe6; --muted: #9a998f; --line: #484840;
+  --mono: #6fa8e0; --mono-bg: #1c2b3b;
+  --svc: #5cc296; --svc-bg: #1b2f26;
+  --db: #e0aa57; --db-bg: #38301c;
+  --bus: #b894e8; --bus-bg: #2b2339;
+  --gw: #aaa; --gw-bg: #2a2a27;
+  --down: #ef7a6c; --down-bg: #3b1f1b; --ok: #5cc296;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+p.sub { color: var(--muted); margin: 0 0 20px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.tabs button { font: inherit; padding: 8px 14px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.hint { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
+svg { width: 100%; height: auto; display: block; }
+svg text { fill: var(--ink); font-family: inherit; font-size: 13px; }
+svg .small { font-size: 12px; fill: var(--muted); }
+svg .title { font-weight: 600; font-size: 14px; }
+.node { stroke-width: 1.6; }
+.mono .node { fill: var(--mono-bg); stroke: var(--mono); }
+.svc .node { fill: var(--svc-bg); stroke: var(--svc); }
+.gw .node { fill: var(--gw-bg); stroke: var(--gw); }
+.db .node { fill: var(--db-bg); stroke: var(--db); }
+.bus .node { fill: var(--bus-bg); stroke: var(--bus); }
+.box { fill: none; stroke: var(--mono); stroke-width: 1.6; stroke-dasharray: 6 4; }
+.pg { fill: none; stroke: var(--db); stroke-width: 1.2; stroke-dasharray: 3 4; }
+.edge { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+.edge.grpc { stroke: var(--svc); }
+.edge.ev { stroke: var(--bus); stroke-dasharray: 5 3; }
+.edge.call { stroke: var(--mono); }
+.edge.off { opacity: .15; }
+.toggle { cursor: pointer; }
+.toggle:focus-visible .node { stroke-width: 3; }
+.down .node { fill: var(--down-bg) !important; stroke: var(--down) !important; }
+.down text { fill: var(--down); }
+.hide { display: none; }
+.status { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
+.st { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--panel); }
+.st b { font-weight: 600; }
+.st small { color: var(--muted); display: block; font-size: 12px; }
+.st .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex: none; }
+.st.bad { border-color: var(--down); background: var(--down-bg); }
+.st.bad .dot { background: var(--down); }
+.st.warn .dot { background: #d9a21b; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; font-size: 13px; color: var(--muted); }
+.legend span::before { content: ""; display: inline-block; width: 22px; height: 0; border-top: 2px solid;
+  vertical-align: middle; margin-right: 6px; }
+.l-call::before { border-color: var(--mono); }
+.l-grpc::before { border-color: var(--svc); }
+.l-ev::before { border-color: var(--bus); border-top-style: dashed; }
+.facts { margin: 14px 0 0; padding-left: 18px; color: var(--muted); }
+.facts li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Photo-share: Monolith vs Microservice</h1>
+  <p class="sub">Kiến trúc dự kiến</p>
+
+  <div class="tabs" role="tablist" aria-label="Chọn kiến trúc">
+    <button role="tab" data-view="mono" aria-selected="true">Monolith</button>
+    <button role="tab" data-view="sync" aria-selected="false">Microservice: feed gRPC</button>
+    <button role="tab" data-view="event" aria-selected="false">Microservice: feed event</button>
+  </div>
+
+  <div class="card">
+    <p class="hint" id="hint"></p>
+
+    <!-- MONOLITH -->
+    <svg id="v-mono" viewBox="0 0 960 400" role="img" aria-label="Sơ đồ monolith: một binary chứa bốn module, một Postgres, một MinIO">
+      <g class="gw"><rect class="node" x="40" y="150" width="100" height="56" rx="8"/><text x="90" y="183" text-anchor="middle">Client</text></g>
+      <path class="edge" d="M140 178 H230" marker-end="url(#ar)"/><text class="small" x="150" y="168">REST</text>
+      <g id="mono-box" class="toggle mono" tabindex="0" role="button" aria-label="Bật tắt monolith">
+        <rect class="box" x="230" y="60" width="640" height="230" rx="12" style="fill: var(--mono-bg); fill-opacity:.35"/>
+        <text class="title" x="250" y="86">Monolith: 1 binary, 1 process</text>
+        <g><rect class="node" x="256" y="130" width="130" height="56" rx="8"/><text x="321" y="163" text-anchor="middle">auth</text></g>
+        <g><rect class="node" x="416" y="130" width="130" height="56" rx="8"/><text x="481" y="163" text-anchor="middle">post</text></g>
+        <g><rect class="node" x="576" y="130" width="130" height="56" rx="8"/><text x="641" y="163" text-anchor="middle">social</text></g>
+        <g><rect class="node" x="736" y="130" width="110" height="56" rx="8"/><text x="791" y="163" text-anchor="middle">feed</text></g>
+        <path class="edge call" d="M416 150 H386" marker-end="url(#arc)"/>
+        <path class="edge call" d="M576 150 H546" marker-end="url(#arc)"/>
+        <path class="edge call" d="M736 150 H706" marker-end="url(#arc)"/>
+        <text class="small" x="250" y="225">Các module gọi nhau bằng hàm Go trực tiếp, không qua mạng.</text>
+        <text class="small" x="250" y="245">Một câu JOIN dựng feed. Khóa ngoại bảo vệ tính toàn vẹn.</text>
+        <text class="small" x="250" y="265">Một phần lỗi thường kéo cả process xuống.</text>
+      </g>
+      <path class="edge" d="M400 290 V330" marker-end="url(#ar)"/>
+      <path class="edge" d="M700 290 V330" marker-end="url(#ar)"/>
+      <g class="db"><rect class="node" x="320" y="332" width="160" height="50" rx="8"/><text x="400" y="355" text-anchor="middle">Postgres</text><text class="small" x="400" y="371" text-anchor="middle">1 database</text></g>
+      <g class="db"><rect class="node" x="620" y="332" width="160" height="50" rx="8"/><text x="700" y="355" text-anchor="middle">MinIO</text><text class="small" x="700" y="371" text-anchor="middle">ảnh</text></g>
+    </svg>
+
+    <!-- MICROSERVICE -->
+    <svg id="v-ms" class="hide" viewBox="0 0 960 470" role="img" aria-label="Sơ đồ microservice: gateway, bốn service, mỗi service một database">
+      <g class="gw"><rect class="node" x="60" y="18" width="100" height="52" rx="8"/><text x="110" y="49" text-anchor="middle">Client</text></g>
+      <path class="edge" d="M160 44 H415" marker-end="url(#ar)"/><text class="small" x="170" y="36">REST</text>
+      <g class="gw"><rect class="node" x="415" y="18" width="120" height="52" rx="8"/><text x="475" y="41" text-anchor="middle">gateway</text><text class="small" x="475" y="57" text-anchor="middle">verify JWT</text></g>
+
+      <!-- gateway to services -->
+      <g class="edge grpc">
+        <path class="edge grpc" d="M440 70 L115 150" marker-end="url(#arg)"/>
+        <path class="edge grpc" d="M460 70 L355 150" marker-end="url(#arg)"/>
+        <path class="edge grpc" d="M490 70 L595 150" marker-end="url(#arg)"/>
+        <path class="edge grpc" d="M510 70 L835 150" marker-end="url(#arg)"/>
+      </g>
+
+      <!-- services -->
+      <g id="n-auth" class="toggle svc" tabindex="0" role="button" aria-label="Bật tắt auth"><rect class="node" x="30" y="150" width="170" height="60" rx="8"/><text class="title" x="115" y="176" text-anchor="middle">auth</text><text class="small" x="115" y="195" text-anchor="middle">users, JWT</text></g>
+      <g id="n-social" class="toggle svc" tabindex="0" role="button" aria-label="Bật tắt social"><rect class="node" x="270" y="150" width="170" height="60" rx="8"/><text class="title" x="355" y="176" text-anchor="middle">social</text><text class="small" x="355" y="195" text-anchor="middle">follow, like, comment</text></g>
+      <g id="n-post" class="toggle svc" tabindex="0" role="button" aria-label="Bật tắt post"><rect class="node" x="510" y="150" width="170" height="60" rx="8"/><text class="title" x="595" y="176" text-anchor="middle">post</text><text class="small" x="595" y="195" text-anchor="middle">bài đăng, ảnh</text></g>
+      <g id="n-feed" class="toggle svc" tabindex="0" role="button" aria-label="Bật tắt feed"><rect class="node" x="750" y="150" width="170" height="60" rx="8"/><text class="title" x="835" y="176" text-anchor="middle">feed</text><text class="small" id="feed-sub" x="835" y="195" text-anchor="middle">không có DB</text></g>
+
+      <!-- service to service (always) -->
+      <path class="edge grpc" d="M270 175 H200" marker-end="url(#arg)"/><text class="small" x="204" y="168">UserExists</text>
+      <path class="edge grpc" d="M440 175 H510" marker-end="url(#arg)"/><text class="small" x="440" y="168">PostExists</text>
+
+      <!-- sync feed calls -->
+      <g id="sync-edges">
+        <path class="edge grpc" d="M750 185 H680" marker-end="url(#arg)"/><text class="small" x="690" y="178">ListPosts</text>
+        <path class="edge grpc" d="M835 210 Q835 262 355 262 Q355 236 355 212" marker-end="url(#arg)"/><text class="small" x="560" y="257">Counts, ListFollowing</text>
+        <path class="edge grpc" d="M850 210 Q850 300 115 300 Q115 250 115 212" marker-end="url(#arg)"/><text class="small" x="440" y="316">GetUsers</text>
+      </g>
+
+      <!-- event edges -->
+      <g id="event-edges" class="hide">
+        <rect class="node" x="270" y="262" width="650" height="34" rx="8" style="fill: var(--bus-bg); stroke: var(--bus)"/>
+        <text x="595" y="284" text-anchor="middle" style="fill: var(--bus)">NATS: post.created, follow.set, like.set, comment.added</text>
+        <path class="edge ev" d="M355 210 V262" marker-end="url(#are)"/><text class="small" x="362" y="240">publish</text>
+        <path class="edge ev" d="M595 210 V262" marker-end="url(#are)"/><text class="small" x="602" y="240">publish</text>
+        <path class="edge ev" d="M835 262 V212" marker-end="url(#are)"/><text class="small" x="842" y="240">consume</text>
+      </g>
+
+      <!-- databases -->
+      <rect class="pg" x="14" y="350" width="932" height="106" rx="12"/>
+      <text class="small" x="26" y="368">1 container Postgres, 4 database, mỗi service một user riêng</text>
+      <path class="edge" d="M115 210 V386" stroke-dasharray="2 3" marker-end="url(#ar)"/>
+      <path class="edge" d="M595 210 V386" stroke-dasharray="2 3" marker-end="url(#ar)"/>
+      <path id="e-social-db" class="edge" d="M355 210 V386" stroke-dasharray="2 3" marker-end="url(#ar)"/>
+      <path id="e-feed-db" class="edge hide" d="M835 210 V386" stroke-dasharray="2 3" marker-end="url(#ar)"/>
+      <g class="db"><rect class="node" x="45" y="388" width="140" height="48" rx="8"/><text x="115" y="418" text-anchor="middle">db auth</text></g>
+      <g class="db"><rect class="node" x="285" y="388" width="140" height="48" rx="8"/><text x="355" y="418" text-anchor="middle">db social</text></g>
+      <g class="db"><rect class="node" x="525" y="388" width="140" height="48" rx="8"/><text x="595" y="418" text-anchor="middle">db post</text></g>
+      <g id="db-feed" class="db hide"><rect class="node" x="765" y="388" width="140" height="48" rx="8"/><text x="835" y="412" text-anchor="middle">db feed</text><text class="small" x="835" y="428" text-anchor="middle">read-model</text></g>
+    </svg>
+
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a897f"/></marker>
+        <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2d9a6c"/></marker>
+        <marker id="arc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#3b82c4"/></marker>
+        <marker id="are" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a5fd0"/></marker>
+      </defs>
+    </svg>
+
+    <div class="legend" id="legend"></div>
+    <div class="status" id="status" aria-live="polite"></div>
+    <ul class="facts" id="facts"></ul>
+  </div>
+</main>
+
+<script>
+(function () {
+  var view = 'mono';
+  var down = { app: false, auth: false, social: false, post: false, feed: false };
+
+  var hints = {
+    mono: 'Bấm vào khung monolith để tắt cả ứng dụng.',
+    sync: 'Bấm vào auth, social, post hoặc feed để tắt từng service.',
+    event: 'Bấm vào auth, social, post hoặc feed để tắt từng service.'
+  };
+  var legends = {
+    mono: '<span class="l-call">gọi hàm trong cùng process</span>',
+    sync: '<span class="l-grpc">gRPC</span>',
+    event: '<span class="l-grpc">gRPC</span><span class="l-ev">event qua NATS</span>'
+  };
+  var facts = {
+    mono: [
+      'Data ownership: 1 DB, feed là một câu JOIN.',
+      'Giao tiếp: gọi hàm, không có độ trễ mạng.',
+      'Lỗi: cả app chạy hoặc cả app chết.',
+      'Deploy: 1 app + Postgres + MinIO.'
+    ],
+    sync: [
+      'Data ownership: mỗi service một DB; feed phải gọi gRPC sang social, post, auth.',
+      'Feed luôn mới nhưng cần cả bốn service: một service chết thì feed trả 503.',
+      'social gọi auth khi follow và post khi like/comment.',
+      'Deploy: gateway + 4 service + Postgres + MinIO.'
+    ],
+    event: [
+      'post và social phát event; feed giữ read-model riêng, kèm tên tác giả.',
+      'Feed chỉ cần chính nó: vẫn trả 200 khi social hoặc auth chết, nhưng dữ liệu có thể cũ.',
+      'Đánh đổi: eventual consistency, like xong chưa chắc thấy ngay.',
+      'Deploy: thêm NATS so với bước 1.'
+    ]
+  };
+
+  function rules() {
+    var d = down, r = [];
+    if (view === 'mono') {
+      var up = !d.app;
+      ['Đăng nhập', 'Đăng ảnh', 'Follow', 'Like / comment', 'Xem feed'].forEach(function (n) {
+        r.push({ n: n, ok: up });
+      });
+      return r;
+    }
+    var ev = view === 'event';
+    r.push({ n: 'Đăng nhập', ok: !d.auth, need: 'auth' });
+    r.push({ n: 'Đăng ảnh', ok: ev ? !d.post && !d.auth : !d.post, need: ev ? 'post, auth' : 'post' });
+    r.push({ n: 'Follow', ok: !d.social && !d.auth, need: 'social, auth' });
+    r.push({ n: 'Like / comment', ok: !d.social && !d.post, need: 'social, post' });
+    if (ev) {
+      var stale = d.social || d.post || d.auth;
+      r.push({ n: 'Xem feed', ok: !d.feed, warn: !d.feed && stale, need: 'feed',
+               note: !d.feed && stale ? 'trả 200, dữ liệu có thể cũ' : '' });
+    } else {
+      r.push({ n: 'Xem feed', ok: !d.feed && !d.auth && !d.post && !d.social, need: 'feed, auth, post, social',
+               note: (!d.feed && (d.auth || d.post || d.social)) ? 'trả 503' : '' });
+    }
+    return r;
+  }
+
+  function renderStatus() {
+    var el = document.getElementById('status');
+    el.innerHTML = rules().map(function (x) {
+      var cls = x.ok ? (x.warn ? 'st warn' : 'st') : 'st bad';
+      var small = x.ok ? (x.note || (x.need ? 'cần: ' + x.need : '')) : (x.note || (x.need ? 'cần: ' + x.need : 'ứng dụng đã tắt'));
+      return '<div class="' + cls + '"><span class="dot"></span><div><b>' + x.n + '</b>' +
+        (small ? '<small>' + small + '</small>' : '') + '</div></div>';
+    }).join('');
+  }
+
+  function setClass(id, on) {
+    var el = document.getElementById(id);
+    if (el) el.classList.toggle('down', on);
+  }
+
+  function render() {
+    var mono = view === 'mono', ev = view === 'event';
+    document.getElementById('v-mono').classList.toggle('hide', !mono);
+    document.getElementById('v-ms').classList.toggle('hide', mono);
+    document.getElementById('sync-edges').classList.toggle('hide', ev);
+    document.getElementById('event-edges').classList.toggle('hide', !ev);
+    document.getElementById('db-feed').classList.toggle('hide', !ev);
+    document.getElementById('e-feed-db').classList.toggle('hide', !ev);
+    document.getElementById('feed-sub').textContent = ev ? 'read-model riêng' : 'không có DB';
+    document.getElementById('hint').textContent = hints[view];
+    document.getElementById('legend').innerHTML = legends[view];
+    document.getElementById('facts').innerHTML = facts[view].map(function (t) { return '<li>' + t + '</li>'; }).join('');
+    setClass('mono-box', down.app);
+    ['auth', 'social', 'post', 'feed'].forEach(function (s) { setClass('n-' + s, down[s]); });
+    document.querySelectorAll('.tabs button').forEach(function (b) {
+      b.setAttribute('aria-selected', String(b.dataset.view === view));
+    });
+    renderStatus();
+  }
+
+  document.querySelectorAll('.tabs button').forEach(function (b) {
+    b.addEventListener('click', function () { view = b.dataset.view; render(); });
+  });
+
+  function bind(id, key) {
+    var el = document.getElementById(id);
+    function flip() { down[key] = !down[key]; render(); }
+    el.addEventListener('click', flip);
+    el.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); }
+    });
+  }
+  bind('mono-box', 'app');
+  ['auth', 'social', 'post', 'feed'].forEach(function (s) { bind('n-' + s, s); });
+
+  render();
+})();
+</script>
+</body>
+</html>
