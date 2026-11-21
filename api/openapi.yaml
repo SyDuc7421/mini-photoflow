@@ -1,0 +1,123 @@
+openapi: 3.0.3
+info:
+  title: Photo-share API
+  version: "1.0"
+  description: |
+    Contract shared by the monolith and the microservice build.
+    Both must pass tests/contract with identical behavior.
+    Auth: `Authorization: Bearer <jwt>` on every route except /register and /login.
+    JWT lifetime 24h. Caption max 500 Unicode characters. Image max 5 MiB (5242880 bytes), JPEG or PNG; anything else is 400.
+    `author` is always the author's username (string). Feed `limit` above 50 is clamped to 50.
+    A feed that depends on an unavailable service answers 503 `unavailable`.
+    Follow/unfollow/like/unlike are idempotent and always answer 204 when the target exists.
+    DELETE (unfollow/unlike) answers 204 even if nothing was set.
+paths:
+  /register:
+    post:
+      summary: Create account. Body {username, password}.
+      responses:
+        "201": {description: 'Created. Body {id, username}'}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /login:
+    post:
+      summary: Body {username, password}.
+      responses:
+        "200": {description: 'Body {token}'}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+  /posts:
+    post:
+      summary: Create post. multipart/form-data with `image` (file) and `caption` (text, optional).
+      responses:
+        "201": {description: 'Body {id, author, caption, image_url, created_at}'}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "413": {$ref: "#/components/responses/PayloadTooLarge"}
+  /posts/{id}:
+    get:
+      responses:
+        "200": {description: 'Body {id, author, caption, image_url, created_at}'}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /posts/{id}/like:
+    put:
+      responses:
+        "204": {description: Liked (idempotent)}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      responses:
+        "204": {description: Unliked (idempotent)}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /posts/{id}/comments:
+    post:
+      summary: Body {text}.
+      responses:
+        "201": {description: 'Body {id, post_id, author, text, created_at}'}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    get:
+      responses:
+        "200": {description: 'Body {items: [comment]} oldest first'}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /users/{id}/follow:
+    put:
+      responses:
+        "204": {description: Following (idempotent)}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      responses:
+        "204": {description: Not following (idempotent)}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /feed:
+    get:
+      summary: Posts of followed users, newest first.
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 50, default: 20}}
+        - {name: before, in: query, schema: {type: string}, description: 'Opaque cursor from previous `next`'}
+      responses:
+        "200":
+          description: |
+            Body {items: [item], next: string|null}; `next` is null on the last page. `items` is `[]` when empty, never null.
+            item = {id, author, caption, image_url, likes, comments, liked_by_me, created_at}.
+            Ordered by (created_at, id) descending; cursor paging never repeats or skips a post.
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+components:
+  responses:
+    BadRequest:
+      description: 400 Bad request
+      content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+    Unauthorized:
+      description: 401 Missing, invalid or expired token; or wrong login
+      content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+    NotFound:
+      description: 404 Post or user does not exist
+      content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+    Conflict:
+      description: 409 Username already taken
+      content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+    Unavailable:
+      description: 503 A service this route depends on is down
+      content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+    PayloadTooLarge:
+      description: 413 Image larger than 5MB
+      content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string, enum: [bad_request, unauthorized, not_found, conflict, payload_too_large, unavailable]}
+            message: {type: string}
