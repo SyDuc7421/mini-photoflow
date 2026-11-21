@@ -14,6 +14,7 @@ import (
 
 	"photoshare/monolith/auth"
 	"photoshare/monolith/post"
+	"photoshare/monolith/social"
 )
 
 //go:embed migrations/001_init.sql
@@ -50,6 +51,7 @@ func main() {
 	mux := http.NewServeMux()
 	auth.Register(mux, db, secret)
 	post.Register(mux, db, secret, store, public, bucket)
+	social.Register(mux, db, secret)
 
 	log.Println("monolith listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))

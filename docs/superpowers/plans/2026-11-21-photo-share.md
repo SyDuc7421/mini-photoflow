@@ -101,7 +101,7 @@ README.md                           # kết quả so sánh
 
 **Interfaces:**
 - Consumes: `auth.Require`, `auth.UserExists`, `post.Exists`.
-- Produces: `social.Register(mux, db)` đăng ký `PUT/DELETE /users/{id}/follow`, `PUT/DELETE /posts/{id}/like`, `POST/GET /posts/{id}/comments`.
+- Produces: `social.Register(mux, db, secret []byte)` đăng ký `PUT/DELETE /users/{id}/follow`, `PUT/DELETE /posts/{id}/like`, `POST/GET /posts/{id}/comments`.
 
 - [ ] **Step 1:** Chạy contract, xác nhận các test follow/like/comment FAIL.
 - [ ] **Step 2:** Implement với `INSERT ... ON CONFLICT DO NOTHING` (idempotent), `DELETE` luôn 204. Follow chính mình → 400; user/post không tồn tại → 404.
