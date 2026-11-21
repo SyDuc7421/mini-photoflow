@@ -63,3 +63,10 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+---
+
+## 5. Model Roles
+
+- **Plan** (writing-plans, spec, design decisions): Opus 5.5.
+- **Implement** (code, tests, compose, commits): Sonnet 5.5.
+- **Verify** (review each task before commit, final whole-branch review): Opus 5.5 via subagent with `model: "opus"` set explicitly — an omitted model inherits the session's.
