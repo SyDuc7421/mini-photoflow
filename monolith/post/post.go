@@ -90,12 +90,9 @@ func Register(mux *http.ServeMux, db *pgxpool.Pool, secret []byte, store, public
 			apierr.Write(w, http.StatusServiceUnavailable, "unavailable", "database error")
 			return
 		}
-		u, err := public.PresignedGetObject(r.Context(), bucket, key, urlTTL, nil)
-		if err != nil {
+		if p.ImageURL, err = ImageURL(r.Context(), public, bucket, key); err != nil {
 			// The post is saved; signing is offline so this should not happen. Still return the post.
 			log.Printf("post: presign %s: %v", key, err)
-		} else {
-			p.ImageURL = u.String()
 		}
 		p.Author = names[userID]
 		writeJSON(w, http.StatusCreated, p)
@@ -209,12 +206,21 @@ func fill(ctx context.Context, db *pgxpool.Pool, public *minio.Client, bucket st
 	if err != nil {
 		return false
 	}
-	u, err := public.PresignedGetObject(ctx, bucket, key, urlTTL, nil)
+	url, err := ImageURL(ctx, public, bucket, key)
 	if err != nil {
 		return false
 	}
-	p.Author, p.ImageURL = names[userID], u.String()
+	p.Author, p.ImageURL = names[userID], url
 	return true
+}
+
+// ImageURL returns a time-limited URL for an image key, signed for the host clients can reach.
+func ImageURL(ctx context.Context, public *minio.Client, bucket, key string) (string, error) {
+	u, err := public.PresignedGetObject(ctx, bucket, key, urlTTL, nil)
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
 }
 
 func mimeOf(b []byte) string {

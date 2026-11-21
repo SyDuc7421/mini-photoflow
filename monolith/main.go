@@ -13,6 +13,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
 	"photoshare/monolith/auth"
+	"photoshare/monolith/feed"
 	"photoshare/monolith/post"
 	"photoshare/monolith/social"
 )
@@ -52,6 +53,7 @@ func main() {
 	auth.Register(mux, db, secret)
 	post.Register(mux, db, secret, store, public, bucket)
 	social.Register(mux, db, secret)
+	feed.Register(mux, db, secret, public, bucket)
 
 	log.Println("monolith listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
