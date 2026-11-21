@@ -88,7 +88,7 @@ README.md                           # kết quả so sánh
 
 **Interfaces:**
 - Consumes: `auth.Require`.
-- Produces: `post.Register(mux, db, minio *minio.Client, bucket string)` đăng ký `POST /posts` (multipart: `image`, `caption`), `GET /posts/{id}`; `post.Exists(ctx, db, id int64) (bool, error)`; response có `image_url` presigned truy cập được từ host.
+- Produces: `post.Register(mux, db, secret []byte, store, public *minio.Client, bucket string)` (`store` upload qua mạng nội bộ, `public` chỉ ký presigned URL với host mà client truy cập được) đăng ký `POST /posts` (multipart: `image`, `caption`), `GET /posts/{id}`; `post.Exists(ctx, db, id int64) (bool, error)`; response có `image_url` presigned truy cập được từ host.
 
 - [ ] **Step 1:** Chạy contract, xác nhận `TestPostRequiresImage`, `TestPostOver5MB413`, `TestCaptionOver500Is400` FAIL.
 - [ ] **Step 2:** Implement: kiểm tra caption ≤ 500 và dùng `http.MaxBytesReader` 5MB (→ 413) **trước** khi ghi MinIO; chỉ nhận content-type ảnh (JPEG/PNG) còn lại 400; ghi MinIO rồi insert DB.

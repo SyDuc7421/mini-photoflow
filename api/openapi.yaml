@@ -24,6 +24,7 @@ paths:
       summary: Body {username, password}.
       responses:
         "200": {description: 'Body {token}'}
+        "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
   /posts:
     post:
