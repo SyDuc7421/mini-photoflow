@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package photoshare.post;
+
+option go_package = "photoshare/microservices/pb/postpb";
+
+// The caller's user id travels in the `x-user-id` metadata, never in a message.
+service Post {
+  // First message is meta, the rest are image chunks. More than 5 MiB -> RESOURCE_EXHAUSTED.
+  rpc CreatePost(stream CreatePostRequest) returns (PostReply);
+  rpc GetPost(PostRef) returns (PostReply);
+  rpc ListPostsByAuthors(ListPostsRequest) returns (ListPostsReply);
+  rpc PostExists(PostRef) returns (ExistsReply);
+}
+
+message CreatePostRequest {
+  oneof part {
+    Meta meta = 1;
+    bytes chunk = 2;
+  }
+}
+
+message Meta {
+  string caption = 1;
+}
+
+message PostRef {
+  int64 id = 1;
+}
+
+message ExistsReply {
+  bool exists = 1;
+}
+
+message PostReply {
+  int64 id = 1;
+  int64 author_id = 2;
+  string author = 3;
+  string caption = 4;
+  string image_url = 5;
+  int64 created_at_micro = 6;
+}
+
+// Position of the last post of the previous page.
+message Cursor {
+  int64 created_at_micro = 1;
+  int64 id = 2;
+}
+
+// Posts strictly before `before` (when set), ordered by (created_at, id) descending.
+message ListPostsRequest {
+  repeated int64 author_ids = 1;
+  Cursor before = 2;
+  int32 limit = 3;
+}
+
+message ListPostsReply {
+  repeated PostReply posts = 1;
+}

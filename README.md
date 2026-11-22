@@ -9,7 +9,7 @@ Công nghệ: Go, Postgres, MinIO, Docker Compose; bản microservice thêm gRPC
 ```
 api/openapi.yaml          hợp đồng REST dùng chung cho cả hai bản
 tests/contract/           bộ test e2e, chạy được trên cả hai bản bằng BASE_URL
-internal/                 package Go dùng chung (apierr, jwtutil)
+internal/                 package Go dùng chung (apierr, jwtutil, grpcutil, dbutil)
 docs/                     SPEC, ARCHITEC, sơ đồ HTML, thiết kế và kế hoạch
 monolith/                 bản monolith
 microservices/            bản microservice
@@ -29,14 +29,12 @@ microservices/            bản microservice
 
 Kế hoạch gồm 12 task (Task 0 đến Task 11).
 
-- Xong: Task 0, tức hợp đồng API và bộ test hợp đồng.
-- Chưa làm: monolith (Task 1–4), microservice (Task 5–10), README so sánh có số liệu (Task 11).
-
-Hiện chưa có server nào chạy được.
+- Xong: Task 0 (hợp đồng API), Task 1–4 (monolith, qua toàn bộ test hợp đồng), Task 5 (microservice: proto, gateway, auth).
+- Chưa làm: microservice post/social/feed (Task 6–10), README so sánh có số liệu (Task 11).
 
 ## Bắt đầu
 
-Yêu cầu: Go 1.22+. Docker và Docker Compose sẽ cần khi có hai bản chạy được.
+Yêu cầu: Go 1.22+ và Docker Compose.
 
 ```bash
 git clone https://github.com/SyDuc7421/mini-photoflow.git
@@ -45,10 +43,22 @@ cd mini-photoflow
 # test đơn vị các package dùng chung
 go test ./internal/...
 
-# test hợp đồng: cần một server đang chạy tại BASE_URL
-BASE_URL=http://localhost:8080 go test ./tests/contract/... -v
+# monolith (app :8080, MinIO :9000). Dừng trước khi chạy bản kia vì trùng cổng.
+docker compose -f monolith/docker-compose.yml up -d --build
+
+# microservice (gateway :8080, MinIO :9000)
+docker compose -f microservices/docker-compose.yml up -d --build
+
+# test hợp đồng: chạy trên bản đang lên, -count=1 để không dùng kết quả cache
+BASE_URL=http://localhost:8080 go test -count=1 ./tests/contract/... -v
 ```
 
-Khi chưa có server, test hợp đồng fail với `connection refused`; đó là trạng thái đúng ở thời điểm này. Cùng một bộ test sẽ chạy trên monolith và microservice bằng cách đổi `BASE_URL`.
+Postgres của microservice chạy 4 database (`auth`, `post`, `social`, `feed`), mỗi cái một role riêng. Script khởi tạo `microservices/initdb/init.sql` chỉ chạy lần đầu; sau khi sửa nó, chạy `docker compose -f microservices/docker-compose.yml down -v`.
 
-Lệnh chạy từng bản (`docker compose up`) sẽ được thêm vào đây khi bản tương ứng xong.
+### Sinh code gRPC
+
+Chỉ cần Go; `buf` và plugin protoc được tải tự động.
+
+```bash
+./scripts/gen-proto.sh   # proto ở microservices/proto, code sinh ra ở microservices/pb
+```

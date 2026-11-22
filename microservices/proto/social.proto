@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package photoshare.social;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "photoshare/microservices/pb/socialpb";
+
+// The caller's user id travels in the `x-user-id` metadata, except where a request names a user.
+service Social {
+  rpc Follow(UserRef) returns (google.protobuf.Empty);
+  rpc Unfollow(UserRef) returns (google.protobuf.Empty);
+  rpc Like(PostRef) returns (google.protobuf.Empty);
+  rpc Unlike(PostRef) returns (google.protobuf.Empty);
+  rpc AddComment(AddCommentRequest) returns (Comment);
+  rpc ListComments(PostRef) returns (ListCommentsReply);
+  rpc ListFollowing(UserRef) returns (UserIds);
+  rpc CountsForPosts(CountsRequest) returns (CountsReply);
+}
+
+message UserRef {
+  int64 id = 1;
+}
+
+message PostRef {
+  int64 id = 1;
+}
+
+message UserIds {
+  repeated int64 ids = 1;
+}
+
+message AddCommentRequest {
+  int64 post_id = 1;
+  string text = 2;
+}
+
+message Comment {
+  int64 id = 1;
+  int64 post_id = 2;
+  string author = 3;
+  string text = 4;
+  int64 created_at_micro = 5;
+}
+
+message ListCommentsReply {
+  repeated Comment comments = 1;
+}
+
+message CountsRequest {
+  repeated int64 post_ids = 1;
+  int64 viewer_id = 2;
+}
+
+message PostCounts {
+  int64 post_id = 1;
+  int32 likes = 2;
+  int32 comments = 3;
+  bool liked_by_me = 4;
+}
+
+message CountsReply {
+  repeated PostCounts counts = 1;
+}
