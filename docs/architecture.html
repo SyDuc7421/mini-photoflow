@@ -90,7 +90,7 @@ svg .title { font-weight: 600; font-size: 14px; }
 <body>
 <main>
   <h1>Photo-share: Monolith vs Microservice</h1>
-  <p class="sub">Kiến trúc dự kiến</p>
+  <p class="sub">Kiến trúc</p>
 
   <div class="tabs" role="tablist" aria-label="Chọn kiến trúc">
     <button role="tab" data-view="mono" aria-selected="true">Monolith</button>
@@ -233,16 +233,17 @@ svg .title { font-weight: 600; font-size: 14px; }
     var d = down, r = [];
     if (view === 'mono') {
       var up = !d.app;
-      ['Đăng nhập', 'Đăng ảnh', 'Follow', 'Like / comment', 'Xem feed'].forEach(function (n) {
+      ['Đăng nhập', 'Đăng ảnh', 'Follow', 'Like', 'Comment', 'Xem feed'].forEach(function (n) {
         r.push({ n: n, ok: up });
       });
       return r;
     }
     var ev = view === 'event';
     r.push({ n: 'Đăng nhập', ok: !d.auth, need: 'auth' });
-    r.push({ n: 'Đăng ảnh', ok: ev ? !d.post && !d.auth : !d.post, need: ev ? 'post, auth' : 'post' });
+    r.push({ n: 'Đăng ảnh', ok: !d.post && !d.auth, need: 'post, auth' });
     r.push({ n: 'Follow', ok: !d.social && !d.auth, need: 'social, auth' });
-    r.push({ n: 'Like / comment', ok: !d.social && !d.post, need: 'social, post' });
+    r.push({ n: 'Like', ok: !d.social && !d.post, need: 'social, post' });
+    r.push({ n: 'Comment', ok: !d.social && !d.post && !d.auth, need: 'social, post, auth' });
     if (ev) {
       var stale = d.social || d.post || d.auth;
       r.push({ n: 'Xem feed', ok: !d.feed, warn: !d.feed && stale, need: 'feed',
