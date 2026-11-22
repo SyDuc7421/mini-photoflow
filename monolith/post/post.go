@@ -141,6 +141,7 @@ func readUpload(w http.ResponseWriter, r *http.Request) (caption string, image [
 		apierr.Write(w, http.StatusBadRequest, "bad_request", "multipart/form-data body required")
 		return "", nil, false
 	}
+	var seenCaption, seenImage bool
 	for {
 		part, err := mr.NextPart()
 		if err == io.EOF {
@@ -151,13 +152,27 @@ func readUpload(w http.ResponseWriter, r *http.Request) (caption string, image [
 		}
 		switch part.FormName() {
 		case "caption":
+			if seenCaption {
+				apierr.Write(w, http.StatusBadRequest, "bad_request", "caption sent twice")
+				return "", nil, false
+			}
+			seenCaption = true
 			// A caption of 500 characters is at most 4 bytes each.
 			b, err := io.ReadAll(io.LimitReader(part, maxCaptionChars*4+1))
 			if err != nil {
 				return "", nil, failRead(w, err)
 			}
+			if len(b) > maxCaptionChars*4 {
+				apierr.Write(w, http.StatusBadRequest, "bad_request", "caption is longer than 500 characters")
+				return "", nil, false
+			}
 			caption = string(b)
 		case "image":
+			if seenImage {
+				apierr.Write(w, http.StatusBadRequest, "bad_request", "image sent twice")
+				return "", nil, false
+			}
+			seenImage = true
 			image, err = readImage(part)
 			if err != nil {
 				return "", nil, failRead(w, err)

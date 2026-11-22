@@ -7,9 +7,10 @@ services:
     environment:
       JWT_SECRET: dev-secret-change-me
       AUTH_ADDR: auth:9001
+      POST_ADDR: post:9002
     ports:
       - "8080:8080"
-    depends_on: [auth]
+    depends_on: [auth, post]
 
   auth:
     build:
@@ -22,6 +23,25 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  post:
+    build:
+      context: ..
+      dockerfile: microservices/Dockerfile
+      args: {SVC: post}
+    environment:
+      DATABASE_URL: postgres://post:post@postgres:5432/post
+      AUTH_ADDR: auth:9001
+      MINIO_ENDPOINT: minio:9000
+      MINIO_PUBLIC_ENDPOINT: localhost:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: photos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
 
   postgres:
     image: postgres:16-alpine

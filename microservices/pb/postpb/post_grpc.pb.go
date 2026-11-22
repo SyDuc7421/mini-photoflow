@@ -31,7 +31,8 @@ const (
 //
 // The caller's user id travels in the `x-user-id` metadata, never in a message.
 type PostClient interface {
-	// First message is meta, the rest are image chunks. More than 5 MiB -> RESOURCE_EXHAUSTED.
+	// One meta message and any number of image chunks, in any order. More than 5 MiB of
+	// chunks -> RESOURCE_EXHAUSTED, and nothing is stored.
 	CreatePost(ctx context.Context, opts ...grpc.CallOption) (Post_CreatePostClient, error)
 	GetPost(ctx context.Context, in *PostRef, opts ...grpc.CallOption) (*PostReply, error)
 	ListPostsByAuthors(ctx context.Context, in *ListPostsRequest, opts ...grpc.CallOption) (*ListPostsReply, error)
@@ -117,7 +118,8 @@ func (c *postClient) PostExists(ctx context.Context, in *PostRef, opts ...grpc.C
 //
 // The caller's user id travels in the `x-user-id` metadata, never in a message.
 type PostServer interface {
-	// First message is meta, the rest are image chunks. More than 5 MiB -> RESOURCE_EXHAUSTED.
+	// One meta message and any number of image chunks, in any order. More than 5 MiB of
+	// chunks -> RESOURCE_EXHAUSTED, and nothing is stored.
 	CreatePost(Post_CreatePostServer) error
 	GetPost(context.Context, *PostRef) (*PostReply, error)
 	ListPostsByAuthors(context.Context, *ListPostsRequest) (*ListPostsReply, error)
