@@ -9,9 +9,10 @@ services:
       AUTH_ADDR: auth:9001
       POST_ADDR: post:9002
       SOCIAL_ADDR: social:9003
+      FEED_ADDR: feed:9004
     ports:
       - "8080:8080"
-    depends_on: [auth, post, social]
+    depends_on: [auth, post, social, feed]
 
   auth:
     build:
@@ -56,6 +57,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  feed:
+    build:
+      context: ..
+      dockerfile: microservices/Dockerfile
+      args: {SVC: feed}
+    environment:
+      FEED_MODE: ${FEED_MODE:-sync}
+      AUTH_ADDR: auth:9001
+      POST_ADDR: post:9002
+      SOCIAL_ADDR: social:9003
 
   postgres:
     image: postgres:16-alpine

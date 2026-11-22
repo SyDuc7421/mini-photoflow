@@ -8,6 +8,7 @@ import (
 
 	"photoshare/internal/grpcutil"
 	"photoshare/microservices/pb/authpb"
+	"photoshare/microservices/pb/feedpb"
 	"photoshare/microservices/pb/postpb"
 	"photoshare/microservices/pb/socialpb"
 )
@@ -17,6 +18,7 @@ type gateway struct {
 	auth   authpb.AuthClient
 	post   postpb.PostClient
 	social socialpb.SocialClient
+	feed   feedpb.FeedClient
 }
 
 func main() {
@@ -38,16 +40,24 @@ func main() {
 	}
 	defer socialConn.Close()
 
+	feedConn, err := grpcutil.Dial(env("FEED_ADDR", "localhost:9004"))
+	if err != nil {
+		log.Fatalf("feed client: %v", err)
+	}
+	defer feedConn.Close()
+
 	g := &gateway{
 		secret: []byte(env("JWT_SECRET", "dev-secret-change-me")),
 		auth:   authpb.NewAuthClient(authConn),
 		post:   postpb.NewPostClient(postConn),
 		social: socialpb.NewSocialClient(socialConn),
+		feed:   feedpb.NewFeedClient(feedConn),
 	}
 	mux := http.NewServeMux()
 	g.registerAuth(mux)
 	g.registerPosts(mux)
 	g.registerSocial(mux)
+	g.registerFeed(mux)
 
 	log.Println("gateway listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
