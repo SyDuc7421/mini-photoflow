@@ -74,7 +74,7 @@ Build cùng một app share photo hai lần (monolith và microservice) để so
 ## 6. Yêu cầu riêng của microservice
 
 - Gateway verify JWT rồi gắn user id vào gRPC metadata `x-user-id`; service không nhận user id từ body.
-- `social` gọi `auth.UserExists` khi follow và `post.PostExists` khi like/comment.
+- `social` gọi `auth.UserExists` khi follow và `post.PostExists` khi like/comment; tên tác giả comment lấy từ `auth.GetUsers`. `post` cũng lấy tên tác giả từ `auth` khi tạo bài, nên đăng ảnh cần `auth`.
 - Upload ảnh đi qua gRPC client-streaming từ gateway sang `post`, giới hạn 5 MiB.
 - **Feed `FEED_MODE=sync`**: feed gọi đồng bộ các service khác. Nếu một service phụ thuộc chết → `GET /feed` trả 503.
 - **Feed `FEED_MODE=event`**: `post` và `social` phát event qua NATS; `feed` giữ read-model riêng (kèm tên tác giả, số like/comment, cờ "mình đã like") và vẫn trả 200 khi `social` hoặc `auth` chết. Dữ liệu có thể cũ.
@@ -91,4 +91,4 @@ Build cùng một app share photo hai lần (monolith và microservice) để so
 
 ## 8. Thứ tự thực hiện
 
-Monolith → microservice bước 1 (gRPC đồng bộ) → bước 2 (event). Chi tiết 12 task trong `docs/superpowers/plans/2026-11-21-photo-share.md`; Task 0 (hợp đồng và test hợp đồng) đã xong.
+Monolith → microservice bước 1 (gRPC đồng bộ) → bước 2 (event). Chi tiết 12 task trong `docs/superpowers/plans/2026-11-21-photo-share.md`; cả 12 task đã xong, số liệu so sánh nằm ở [README](../README.md#kết-quả-so-sánh).

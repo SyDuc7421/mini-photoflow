@@ -1,6 +1,6 @@
 # Kiến trúc: Monolith vs Microservice
 
-Tài liệu này mô tả kiến trúc **dự kiến** của hai bản theo thiết kế đã duyệt. Phần code chưa được viết (mới xong Task 0), nên mọi thứ dưới đây là thiết kế, chưa phải kết quả đo đạc. Sơ đồ tương tác: [architecture.html](architecture.html).
+Tài liệu này mô tả kiến trúc của hai bản theo thiết kế đã duyệt; hai bản đã được cài đặt. Số liệu đo thật nằm ở [README](../README.md#kết-quả-so-sánh), các chỗ thiết kế đã đổi khi cài đặt được ghi tại chỗ. Sơ đồ tương tác: [architecture.html](architecture.html).
 
 Cả hai bản dùng Go, cùng một REST API (`api/openapi.yaml`) và cùng một bộ test hợp đồng, để khác biệt chỉ nằm ở kiến trúc bên trong.
 
@@ -114,18 +114,19 @@ Khác thiết kế ban đầu, có lý do: `post.created` mang `image_key` thay 
 | **Data ownership** | 1 DB, feed là `JOIN`, FK bảo vệ tính toàn vẹn | mỗi service một DB, feed ghép bằng gRPC, không có FK xuyên service | thêm read-model riêng cho feed, dữ liệu được sao chép |
 | **Giao tiếp** | gọi hàm | gRPC đồng bộ | gRPC cho truy vấn, NATS cho event |
 | **Một phần chết** | cả app chết | tắt `social`: feed 503, follow/like/comment lỗi; login và đăng ảnh vẫn chạy | tắt `social`: feed vẫn 200 (dữ liệu cũ); follow/like/comment vẫn lỗi |
-| **Chạy/deploy** | 1 app + Postgres + MinIO | gateway + 4 service + Postgres + MinIO | thêm NATS |
+| **Chạy/deploy** | 1 app + Postgres + MinIO | gateway + 4 service + Postgres + MinIO + NATS | như `sync` (NATS chạy ở cả hai chế độ; ở `sync` event vẫn được phát nhưng feed không dùng) |
 
-Các hàng "Một phần chết" là kỳ vọng từ thiết kế; số liệu thật sẽ được ghi vào README sau Task 10 bằng `scripts/failure.sh`.
+Các hàng "Một phần chết" đã được đo bằng `scripts/failure.sh`; kết quả ở README.
 
 ### Ai cần ai (microservice)
 
 | Thao tác | `sync` cần | `event` cần |
 |---|---|---|
 | Đăng nhập | auth | auth |
-| Đăng ảnh | post | post, auth (lấy tên tác giả) |
-| Follow | social, auth | social, auth |
-| Like / comment | social, post | social, post |
+| Đăng ảnh | post, auth (lấy tên tác giả) | post, auth (lấy tên tác giả) |
+| Follow / Unfollow | social, auth | social, auth |
+| Like / Unlike | social, post | social, post |
+| Thêm / xem comment | social, post, auth (lấy tên tác giả) | social, post, auth (lấy tên tác giả) |
 | Xem feed | feed, auth, post, social | feed |
 
 ## 5. Những thứ cố ý không làm
