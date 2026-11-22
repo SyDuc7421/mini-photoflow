@@ -8,15 +8,18 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"photoshare/internal/dbutil"
+	"photoshare/internal/events"
 	"photoshare/internal/grpcutil"
 	"photoshare/microservices/pb/authpb"
 	"photoshare/microservices/pb/postpb"
@@ -31,6 +34,12 @@ type server struct {
 	db   *pgxpool.Pool
 	auth authpb.AuthClient
 	post postpb.PostClient
+	nc   *nats.Conn // nil when NATS_URL is unset: events are off
+
+	// edgeLocks serialize "write, then publish" for one follow or like edge. Without them two
+	// quick PUT/DELETE calls can commit in one order and publish in the other, and the
+	// feed's read model would keep the wrong state until the next toggle.
+	edgeLocks [64]sync.Mutex
 }
 
 func main() {
@@ -55,12 +64,20 @@ func main() {
 	}
 	defer postConn.Close()
 
+	var nc *nats.Conn
+	if url := os.Getenv("NATS_URL"); url != "" {
+		if nc, err = events.Connect(url); err != nil {
+			log.Fatalf("nats: %v", err)
+		}
+		defer nc.Close()
+	}
+
 	lis, err := net.Listen("tcp", env("GRPC_ADDR", ":9003"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	s := grpc.NewServer()
-	socialpb.RegisterSocialServer(s, &server{db: db, auth: authpb.NewAuthClient(authConn), post: postpb.NewPostClient(postConn)})
+	socialpb.RegisterSocialServer(s, &server{db: db, auth: authpb.NewAuthClient(authConn), post: postpb.NewPostClient(postConn), nc: nc})
 	log.Printf("social listening on %s", lis.Addr())
 	log.Fatal(s.Serve(lis))
 }
@@ -80,8 +97,12 @@ func (s *server) Follow(ctx context.Context, ref *socialpb.UserRef) (*emptypb.Em
 	if err := s.requireCaller(ctx, me); err != nil {
 		return nil, err
 	}
+	defer s.lockEdge(me, ref.Id)()
 	_, err = s.db.Exec(ctx,
 		`INSERT INTO follows (follower_id, followee_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, me, ref.Id)
+	if err == nil {
+		s.publish(events.SubjectFollowSet, events.FollowSet{FollowerID: me, FolloweeID: ref.Id, Following: true})
+	}
 	return &emptypb.Empty{}, dbErr(err)
 }
 
@@ -93,7 +114,11 @@ func (s *server) Unfollow(ctx context.Context, ref *socialpb.UserRef) (*emptypb.
 	if err := s.requireUser(ctx, ref.Id); err != nil {
 		return nil, err
 	}
+	defer s.lockEdge(me, ref.Id)()
 	_, err = s.db.Exec(ctx, `DELETE FROM follows WHERE follower_id = $1 AND followee_id = $2`, me, ref.Id)
+	if err == nil {
+		s.publish(events.SubjectFollowSet, events.FollowSet{FollowerID: me, FolloweeID: ref.Id, Following: false})
+	}
 	return &emptypb.Empty{}, dbErr(err)
 }
 
@@ -107,8 +132,12 @@ func (s *server) Like(ctx context.Context, ref *socialpb.PostRef) (*emptypb.Empt
 	if err := s.requirePost(ctx, ref.Id); err != nil {
 		return nil, err
 	}
+	defer s.lockEdge(ref.Id, me)()
 	_, err = s.db.Exec(ctx,
 		`INSERT INTO likes (post_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, ref.Id, me)
+	if err == nil {
+		s.publish(events.SubjectLikeSet, events.LikeSet{PostID: ref.Id, UserID: me, Liked: true})
+	}
 	return &emptypb.Empty{}, dbErr(err)
 }
 
@@ -120,7 +149,11 @@ func (s *server) Unlike(ctx context.Context, ref *socialpb.PostRef) (*emptypb.Em
 	if err := s.requirePost(ctx, ref.Id); err != nil {
 		return nil, err
 	}
+	defer s.lockEdge(ref.Id, me)()
 	_, err = s.db.Exec(ctx, `DELETE FROM likes WHERE post_id = $1 AND user_id = $2`, ref.Id, me)
+	if err == nil {
+		s.publish(events.SubjectLikeSet, events.LikeSet{PostID: ref.Id, UserID: me, Liked: false})
+	}
 	return &emptypb.Empty{}, dbErr(err)
 }
 
@@ -152,6 +185,7 @@ func (s *server) AddComment(ctx context.Context, req *socialpb.AddCommentRequest
 		return nil, dbErr(err)
 	}
 	c.CreatedAtMicro = created.UnixMicro()
+	s.publish(events.SubjectCommentAdded, events.CommentAdded{PostID: req.PostId, CommentID: c.Id})
 	return c, nil
 }
 
@@ -238,6 +272,20 @@ func (s *server) CountsForPosts(ctx context.Context, req *socialpb.CountsRequest
 		out.Counts = append(out.Counts, c)
 	}
 	return out, dbErr(rows.Err())
+}
+
+// lockEdge locks the stripe of the edge (a, b) and returns the unlock function.
+func (s *server) lockEdge(a, b int64) func() {
+	m := &s.edgeLocks[uint64(a*31+b)%uint64(len(s.edgeLocks))]
+	m.Lock()
+	return m.Unlock
+}
+
+// publish sends an event after a committed write. A failure is only logged: a lost event must not fail the request.
+func (s *server) publish(subject string, v any) {
+	if err := events.Publish(s.nc, subject, v); err != nil {
+		log.Printf("social: publish %s: %v", subject, err)
+	}
 }
 
 // requireUser maps a missing user to NotFound; a failing auth service passes through as Unavailable.

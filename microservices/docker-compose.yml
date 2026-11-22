@@ -39,10 +39,13 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: photos
+      NATS_URL: nats://nats:4222
     depends_on:
       postgres:
         condition: service_healthy
       minio:
+        condition: service_started
+      nats:
         condition: service_started
 
   social:
@@ -54,9 +57,12 @@ services:
       DATABASE_URL: postgres://social:social@postgres:5432/social
       AUTH_ADDR: auth:9001
       POST_ADDR: post:9002
+      NATS_URL: nats://nats:4222
     depends_on:
       postgres:
         condition: service_healthy
+      nats:
+        condition: service_started
 
   feed:
     build:
@@ -68,6 +74,9 @@ services:
       AUTH_ADDR: auth:9001
       POST_ADDR: post:9002
       SOCIAL_ADDR: social:9003
+
+  nats:
+    image: nats:2.10-alpine
 
   postgres:
     image: postgres:16-alpine

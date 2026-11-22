@@ -38,7 +38,9 @@ func UserID(ctx context.Context) (int64, error) {
 
 // Dial returns a lazily connected plaintext client, so a service can start before its peers.
 func Dial(addr string) (*grpc.ClientConn, error) {
-	return grpc.NewClient(addr,
+	// passthrough: the default dns resolver re-resolves at most every 30 s, so after a peer
+	// container is recreated with a new IP the client would keep dialling the old one.
+	return grpc.NewClient("passthrough:///"+addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		// Unpaginated replies (e.g. a post's comments) can pass the 4 MB default.
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(64<<20)),
