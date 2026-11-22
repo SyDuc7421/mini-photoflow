@@ -71,9 +71,22 @@ services:
       args: {SVC: feed}
     environment:
       FEED_MODE: ${FEED_MODE:-sync}
+      # sync mode calls these services
       AUTH_ADDR: auth:9001
       POST_ADDR: post:9002
       SOCIAL_ADDR: social:9003
+      # event mode: own database, NATS events, and the MinIO host name that signed URLs must carry
+      DATABASE_URL: postgres://feed:feed@postgres:5432/feed
+      NATS_URL: nats://nats:4222
+      MINIO_PUBLIC_ENDPOINT: localhost:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: photos
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
 
   nats:
     image: nats:2.10-alpine
@@ -85,6 +98,8 @@ services:
       POSTGRES_PASSWORD: postgres
     volumes:
       - ./initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:55433:5432" # for the read-model tests (TEST_DATABASE_URL); services use the internal network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h localhost -U postgres"]
       interval: 2s

@@ -1,19 +1,27 @@
-// Command feed builds the home feed. In sync mode it has no data of its own: every
-// request is assembled from the auth, post and social services.
+// Command feed builds the home feed in one of two ways, chosen by FEED_MODE:
+//   - sync: no data of its own; every request is assembled from the auth, post and social services.
+//   - event: a read model in its own database, kept up to date by NATS events; a request calls nobody.
 package main
 
 import (
 	"context"
+	_ "embed"
 	"log"
 	"net"
 	"os"
+	"time"
 
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/nats-io/nats.go"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"photoshare/internal/cursor"
+	"photoshare/internal/dbutil"
+	"photoshare/internal/events"
 	"photoshare/internal/grpcutil"
 	"photoshare/microservices/pb/authpb"
 	"photoshare/microservices/pb/feedpb"
@@ -21,18 +29,31 @@ import (
 	"photoshare/microservices/pb/socialpb"
 )
 
-const maxLimit = 50
+//go:embed schema.sql
+var schema string
+
+const (
+	maxLimit     = 50
+	urlTTL       = time.Hour
+	applyTimeout = 5 * time.Second
+)
 
 type server struct {
 	feedpb.UnimplementedFeedServer
+	// sync mode
 	auth   authpb.AuthClient
 	post   postpb.PostClient
 	social socialpb.SocialClient
+	// event mode (rm == nil in sync mode)
+	rm     *ReadModel
+	public *minio.Client // only signs image URLs; the read model stores keys, not expiring URLs
+	bucket string
 }
 
 func main() {
-	if mode := env("FEED_MODE", "sync"); mode != "sync" {
-		log.Fatalf("FEED_MODE=%q is not supported yet (only sync)", mode)
+	mode := env("FEED_MODE", "sync")
+	if mode != "sync" && mode != "event" {
+		log.Fatalf("FEED_MODE=%q: want sync or event", mode)
 	}
 	dial := func(name, addr string) *grpc.ClientConn {
 		conn, err := grpcutil.Dial(addr)
@@ -52,18 +73,60 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	s := grpc.NewServer()
-	feedpb.RegisterFeedServer(s, &server{
+	srv := &server{
 		auth:   authpb.NewAuthClient(authConn),
 		post:   postpb.NewPostClient(postConn),
 		social: socialpb.NewSocialClient(socialConn),
-	})
-	log.Printf("feed listening on %s (mode sync)", lis.Addr())
+	}
+	if mode == "event" {
+		srv.startEventMode()
+	}
+	s := grpc.NewServer()
+	feedpb.RegisterFeedServer(s, srv)
+	log.Printf("feed listening on %s (mode %s)", lis.Addr(), mode)
 	log.Fatal(s.Serve(lis))
 }
 
-// GetFeed asks social who the viewer follows, post for their newest posts, then social for the
-// counts and auth for the author names. If any of them fails, the feed fails.
+// startEventMode opens the feed's own database and starts consuming events into it.
+func (s *server) startEventMode() {
+	ctx := context.Background()
+	db, err := dbutil.Connect(ctx, env("DATABASE_URL", "postgres://feed:feed@localhost:5432/feed"))
+	if err != nil {
+		log.Fatalf("database: %v", err)
+	}
+	if _, err := db.Exec(ctx, schema); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
+	s.rm = &ReadModel{db: db}
+
+	s.bucket = env("MINIO_BUCKET", "photos")
+	s.public, err = minio.New(env("MINIO_PUBLIC_ENDPOINT", "localhost:9000"), &minio.Options{
+		Creds:  credentials.NewStaticV4(env("MINIO_ACCESS_KEY", "minioadmin"), env("MINIO_SECRET_KEY", "minioadmin"), ""),
+		Region: "us-east-1", // fixed region keeps signing offline
+	})
+	if err != nil {
+		log.Fatalf("minio: %v", err)
+	}
+
+	nc, err := events.Connect(env("NATS_URL", "nats://localhost:4222"))
+	if err != nil {
+		log.Fatalf("nats: %v", err)
+	}
+	for _, subject := range []string{events.SubjectPostCreated, events.SubjectFollowSet, events.SubjectLikeSet, events.SubjectCommentAdded} {
+		_, err := nc.Subscribe(subject, func(m *nats.Msg) {
+			// A hung database must not block this subscription forever.
+			ctx, cancel := context.WithTimeout(context.Background(), applyTimeout)
+			defer cancel()
+			if err := s.rm.Apply(ctx, Event{Subject: m.Subject, Data: m.Data}); err != nil {
+				log.Printf("feed: dropped %s event: %v", m.Subject, err)
+			}
+		})
+		if err != nil {
+			log.Fatalf("subscribe %s: %v", subject, err)
+		}
+	}
+}
+
 func (s *server) GetFeed(ctx context.Context, req *feedpb.GetFeedRequest) (*feedpb.GetFeedReply, error) {
 	me, err := grpcutil.UserID(ctx)
 	if err != nil {
@@ -81,7 +144,36 @@ func (s *server) GetFeed(ctx context.Context, req *feedpb.GetFeedRequest) (*feed
 		}
 		before = &postpb.Cursor{CreatedAtMicro: c.Micro, Id: c.ID}
 	}
+	if s.rm != nil {
+		return s.eventFeed(ctx, me, req.Before, limit)
+	}
+	return s.syncFeed(ctx, me, before, limit)
+}
 
+// eventFeed reads only the feed's own tables, so it keeps working while auth, post and social are down.
+// The data can lag behind: it is as fresh as the last event the feed received.
+func (s *server) eventFeed(ctx context.Context, me int64, before string, limit int) (*feedpb.GetFeedReply, error) {
+	items, next, err := s.rm.Feed(ctx, me, before, limit)
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "database error")
+	}
+	out := &feedpb.GetFeedReply{Next: next}
+	for _, it := range items {
+		u, err := s.public.PresignedGetObject(ctx, s.bucket, it.ImageKey, urlTTL, nil)
+		if err != nil {
+			return nil, status.Error(codes.Internal, "cannot sign image url")
+		}
+		out.Items = append(out.Items, &feedpb.Item{
+			Id: it.ID, Author: it.Author, Caption: it.Caption, ImageUrl: u.String(),
+			Likes: it.Likes, Comments: it.Comments, LikedByMe: it.LikedByMe, CreatedAtMicro: it.CreatedAtMicro,
+		})
+	}
+	return out, nil
+}
+
+// syncFeed asks social who the viewer follows, post for their newest posts, then social for the
+// counts and auth for the author names. If any of them fails, the feed fails.
+func (s *server) syncFeed(ctx context.Context, me int64, before *postpb.Cursor, limit int) (*feedpb.GetFeedReply, error) {
 	following, err := s.social.ListFollowing(ctx, &socialpb.UserRef{Id: me})
 	if err != nil {
 		return nil, err
