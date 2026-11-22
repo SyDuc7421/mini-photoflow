@@ -23,11 +23,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"photoshare/internal/dbutil"
+	"photoshare/internal/events"
 	"photoshare/internal/grpcutil"
 	"photoshare/microservices/pb/authpb"
 	"photoshare/microservices/pb/postpb"
@@ -53,6 +55,7 @@ type server struct {
 	public *minio.Client // only signs URLs, with the host name clients can reach
 	bucket string
 	auth   authpb.AuthClient
+	nc     *nats.Conn // nil when NATS_URL is unset: events are off
 }
 
 func main() {
@@ -81,12 +84,20 @@ func main() {
 	}
 	defer authConn.Close()
 
+	var nc *nats.Conn
+	if url := os.Getenv("NATS_URL"); url != "" {
+		if nc, err = events.Connect(url); err != nil {
+			log.Fatalf("nats: %v", err)
+		}
+		defer nc.Close()
+	}
+
 	lis, err := net.Listen("tcp", env("GRPC_ADDR", ":9002"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	s := grpc.NewServer()
-	postpb.RegisterPostServer(s, &server{db: db, store: store, public: public, bucket: bucket, auth: authpb.NewAuthClient(authConn)})
+	postpb.RegisterPostServer(s, &server{db: db, store: store, public: public, bucket: bucket, auth: authpb.NewAuthClient(authConn), nc: nc})
 	log.Printf("post listening on %s", lis.Addr())
 	log.Fatal(s.Serve(lis))
 }
@@ -171,6 +182,12 @@ func (s *server) CreatePost(stream postpb.Post_CreatePostServer) error {
 			log.Printf("post: orphan object %s left in %s: %v", key, s.bucket, rerr)
 		}
 		return status.Error(codes.Unavailable, "database error")
+	}
+	// The row is committed; a lost event must not fail the request.
+	if err := events.Publish(s.nc, events.SubjectPostCreated, events.PostCreated{
+		PostID: id, AuthorID: userID, AuthorName: name, Caption: caption, ImageKey: key, CreatedAtMicro: created.UnixMicro(),
+	}); err != nil {
+		log.Printf("post: publish %s: %v", events.SubjectPostCreated, err)
 	}
 	return stream.SendAndClose(s.reply(ctx, id, userID, name, caption, key, created))
 }

@@ -100,10 +100,12 @@ Payload event:
 
 | Subject | Payload |
 |---|---|
-| `post.created` | `post_id, author_id, author_name, caption, image_url, created_at` |
+| `post.created` | `post_id, author_id, author_name, caption, image_key, created_at_micro` |
 | `follow.set` | `follower_id, followee_id, following` |
 | `like.set` | `post_id, user_id, liked` |
-| `comment.added` | `post_id` |
+| `comment.added` | `post_id, comment_id` |
+
+Khác thiết kế ban đầu, có lý do: `post.created` mang `image_key` thay vì `image_url` vì URL ký sẵn hết hạn (read-model giữ URL cũ sẽ hỏng ảnh), nên `feed` ký URL lúc đọc; `created_at_micro` giữ đúng timestamp cho cursor; `comment.added` thêm `comment_id` để bỏ qua event giao trùng. Đây là NATS pub/sub thường: giao tối đa một lần, không phát lại, nên event phát lúc `feed` đang tắt sẽ mất. Event còn nằm trong bộ đệm của producer lúc service thoát (SIGTERM, `log.Fatal`) cũng mất. Với cùng một cạnh follow/like, producer ghi rồi phát dưới một khoá nên thứ tự phát khớp thứ tự commit; event của các service khác nhau thì không có thứ tự chung, nên consumer phải chịu được `like.set` đến trước `post.created`.
 
 ## 4. So sánh theo bốn điểm
 

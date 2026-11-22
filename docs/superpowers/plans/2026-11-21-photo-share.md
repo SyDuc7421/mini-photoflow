@@ -165,7 +165,7 @@ README.md                           # kết quả so sánh
 **Files:** Modify `microservices/{post,social}/main.go`, `microservices/docker-compose.yml` (thêm NATS); Create `internal/events/events.go`.
 
 **Interfaces:**
-- Produces: `events.Publish(nc *nats.Conn, subject string, v any) error`; subject và payload: `post.created {post_id, author_id, author_name, caption, image_url, created_at}`, `follow.set {follower_id, followee_id, following bool}`, `like.set {post_id, user_id, liked bool}`, `comment.added {post_id}`. `author_name` lấy từ `auth.GetUsers` khi `post` tạo bài (nên lưu sẵn tên).
+- Produces: `events.Publish(nc *nats.Conn, subject string, v any) error`; subject và payload: `post.created {post_id, author_id, author_name, caption, image_key, created_at_micro}`, `follow.set {follower_id, followee_id, following bool}`, `like.set {post_id, user_id, liked bool}`, `comment.added {post_id, comment_id}`. `author_name` lấy từ `auth.GetUsers` khi `post` tạo bài (nên lưu sẵn tên).
 
 - [ ] **Step 1:** Viết test đơn vị `TestEventPayloadRoundTrip` cho `events`; chạy, FAIL rồi PASS sau khi implement.
 - [ ] **Step 2:** Sau mỗi ghi DB thành công, `post`/`social` publish event tương ứng. Một lỗi publish chỉ log, không làm hỏng request.
