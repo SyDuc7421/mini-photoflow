@@ -8,9 +8,10 @@ services:
       JWT_SECRET: dev-secret-change-me
       AUTH_ADDR: auth:9001
       POST_ADDR: post:9002
+      SOCIAL_ADDR: social:9003
     ports:
       - "8080:8080"
-    depends_on: [auth, post]
+    depends_on: [auth, post, social]
 
   auth:
     build:
@@ -42,6 +43,19 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
+
+  social:
+    build:
+      context: ..
+      dockerfile: microservices/Dockerfile
+      args: {SVC: social}
+    environment:
+      DATABASE_URL: postgres://social:social@postgres:5432/social
+      AUTH_ADDR: auth:9001
+      POST_ADDR: post:9002
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   postgres:
     image: postgres:16-alpine
