@@ -125,7 +125,8 @@ func Names(ctx context.Context, db *pgxpool.Pool, ids []int64) (map[int64]string
 
 func readCredentials(w http.ResponseWriter, r *http.Request) (credentials, bool) {
 	var c credentials
-	if err := json.NewDecoder(r.Body).Decode(&c); err != nil || c.Username == "" || c.Password == "" {
+	if err := json.NewDecoder(r.Body).Decode(&c); err != nil || c.Username == "" || c.Password == "" ||
+		strings.ContainsRune(c.Username, 0) || strings.ContainsRune(c.Password, 0) {
 		apierr.Write(w, http.StatusBadRequest, "bad_request", "username and password are required")
 		return c, false
 	}
