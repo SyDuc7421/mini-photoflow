@@ -6,7 +6,8 @@ option go_package = "photoshare/microservices/pb/postpb";
 
 // The caller's user id travels in the `x-user-id` metadata, never in a message.
 service Post {
-  // First message is meta, the rest are image chunks. More than 5 MiB -> RESOURCE_EXHAUSTED.
+  // One meta message and any number of image chunks, in any order. More than 5 MiB of
+  // chunks -> RESOURCE_EXHAUSTED, and nothing is stored.
   rpc CreatePost(stream CreatePostRequest) returns (PostReply);
   rpc GetPost(PostRef) returns (PostReply);
   rpc ListPostsByAuthors(ListPostsRequest) returns (ListPostsReply);
@@ -39,6 +40,8 @@ message PostReply {
   string caption = 4;
   string image_url = 5;
   int64 created_at_micro = 6;
+  // Storage key of the image; image_url is a time-limited signed URL for it.
+  string image_key = 7;
 }
 
 // Position of the last post of the previous page.
