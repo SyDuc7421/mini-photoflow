@@ -40,6 +40,8 @@ func UserID(ctx context.Context) (int64, error) {
 func Dial(addr string) (*grpc.ClientConn, error) {
 	return grpc.NewClient(addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		// Unpaginated replies (e.g. a post's comments) can pass the 4 MB default.
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(64<<20)),
 		// Default backoff grows to 2 minutes; keep recovery after a restart short.
 		grpc.WithConnectParams(grpc.ConnectParams{
 			Backoff:           backoff.Config{BaseDelay: 200 * time.Millisecond, Multiplier: 1.6, MaxDelay: 2 * time.Second},

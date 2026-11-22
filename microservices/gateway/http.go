@@ -53,7 +53,8 @@ func writeError(w http.ResponseWriter, err error) {
 	case codes.Unauthenticated:
 		apierr.Write(w, http.StatusUnauthorized, "unauthorized", status.Convert(err).Message())
 	case codes.ResourceExhausted:
-		apierr.Write(w, http.StatusRequestEntityTooLarge, "payload_too_large", status.Convert(err).Message())
+		// Never echo the gRPC message: it can be a transport error such as "received message larger than max".
+		apierr.Write(w, http.StatusRequestEntityTooLarge, "payload_too_large", "payload is too large")
 	case codes.Unavailable, codes.DeadlineExceeded:
 		apierr.Write(w, http.StatusServiceUnavailable, "unavailable", "a backing service is unavailable")
 	default:
