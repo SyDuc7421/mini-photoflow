@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Luồng gọi giữa các service</title>
+<style>
+:root {
+  --bg: #f7f6f2; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a64; --line: #c9c6bb;
+  --http: #2f6fb3; --grpc: #2d7d5a; --sql: #a16a1f; --nats: #7a4fb5; --self: #6b6a64;
+  --http-bg: #e3eefa; --svc-bg: #e0f1e8; --db-bg: #f8eed9; --bus-bg: #ece3f7; --gw-bg: #ecebe6;
+  --bad: #c0392b; --bad-bg: #fbe3df; --ok: #2d7d5a; --ok-bg: #e0f1e8; --warn: #b9831a; --warn-bg: #fbf1d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161715; --panel: #1f201e; --ink: #ecebe6; --muted: #9a998f; --line: #484840;
+    --http: #6fa8e0; --grpc: #5cc296; --sql: #e0aa57; --nats: #b894e8; --self: #9a998f;
+    --http-bg: #1c2b3b; --svc-bg: #1b2f26; --db-bg: #38301c; --bus-bg: #2b2339; --gw-bg: #2a2a27;
+    --bad: #ef7a6c; --bad-bg: #3b1f1b; --ok: #5cc296; --ok-bg: #1b2f26; --warn: #e0b04a; --warn-bg: #38301c;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161715; --panel: #1f201e; --ink: #ecebe6; --muted: #9a998f; --line: #484840;
+  --http: #6fa8e0; --grpc: #5cc296; --sql: #e0aa57; --nats: #b894e8; --self: #9a998f;
+  --http-bg: #1c2b3b; --svc-bg: #1b2f26; --db-bg: #38301c; --bus-bg: #2b2339; --gw-bg: #2a2a27;
+  --bad: #ef7a6c; --bad-bg: #3b1f1b; --ok: #5cc296; --ok-bg: #1b2f26; --warn: #e0b04a; --warn-bg: #38301c;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+p.sub { color: var(--muted); margin: 0 0 18px; }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.tabs button { font: inherit; padding: 8px 14px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+.intro { margin: 0 0 10px; color: var(--muted); }
+.toggles { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 0 0 10px; font-size: 14px; }
+.toggles strong { font-weight: 600; }
+.toggles label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.result { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--ok); background: var(--ok-bg); margin: 0 0 12px; }
+.result.fail { border-color: var(--bad); background: var(--bad-bg); }
+.result.warn { border-color: var(--warn); background: var(--warn-bg); }
+.result b { font-weight: 600; }
+.scroll { overflow-x: auto; }
+svg { display: block; width: 100%; min-width: 760px; height: auto; }
+svg text { fill: var(--ink); font-family: inherit; font-size: 12.5px; }
+svg .fn { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; paint-order: stroke;
+  stroke: var(--panel); stroke-width: 4px; stroke-linejoin: round; }
+svg .muted { fill: var(--muted); }
+svg .ptitle { font-weight: 600; font-size: 13px; }
+.box { stroke-width: 1.6; }
+.k-client .box { fill: var(--gw-bg); stroke: var(--self); }
+.k-gateway .box { fill: var(--http-bg); stroke: var(--http); }
+.k-svc .box { fill: var(--svc-bg); stroke: var(--grpc); }
+.k-db .box { fill: var(--db-bg); stroke: var(--sql); }
+.k-bus .box { fill: var(--bus-bg); stroke: var(--nats); }
+.life { stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 4 5; }
+.arrow { fill: none; stroke-width: 1.9; }
+.arrow.ret { stroke-dasharray: 5 4; stroke-width: 1.5; opacity: .85; }
+.c-http { stroke: var(--http); } .c-grpc { stroke: var(--grpc); } .c-sql { stroke: var(--sql); }
+.c-nats { stroke: var(--nats); stroke-dasharray: 6 4; } .c-self { stroke: var(--self); }
+.m-http { fill: var(--http); } .m-grpc { fill: var(--grpc); } .m-sql { fill: var(--sql); }
+.m-nats { fill: var(--nats); } .m-self { fill: var(--self); } .m-bad { fill: var(--bad); } .m-warn { fill: var(--warn); }
+.selfbox { fill: var(--panel); stroke: var(--self); stroke-width: 1.4; }
+.badge { fill: var(--ink); } .badgetxt { fill: var(--bg); font-size: 11px; font-weight: 700; text-anchor: middle; }
+.step { cursor: pointer; }
+.step:focus-visible { outline: none; }
+.step:focus-visible .hit, .step.sel .hit { fill: var(--ink); opacity: .07; }
+.hit { fill: transparent; }
+.step.fail .arrow, .step.fail .selfbox { stroke: var(--bad); }
+.step.soft .arrow, .step.soft .selfbox { stroke: var(--warn); }
+.step.skip { opacity: .28; }
+.divider line { stroke: var(--line); stroke-dasharray: 3 4; }
+.divider text { fill: var(--muted); font-size: 12px; text-anchor: middle; paint-order: stroke; stroke: var(--panel); stroke-width: 6px; }
+.parbox { fill: var(--ink); opacity: .04; }
+.partxt { fill: var(--muted); font-size: 11px; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+.legend span::before { content: ""; display: inline-block; width: 22px; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
+.l-http::before { border-color: var(--http); } .l-grpc::before { border-color: var(--grpc); }
+.l-sql::before { border-color: var(--sql); } .l-nats::before { border-color: var(--nats); border-top-style: dashed; }
+.l-ret::before { border-color: var(--muted); border-top-style: dashed; }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 14px; }
+@media (max-width: 820px) { .cols { grid-template-columns: 1fr; } }
+ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+ol.steps li { margin: 0 0 4px; }
+ol.steps button { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; padding: 7px 10px;
+  border-radius: 8px; border: 1px solid transparent; background: transparent; display: grid;
+  grid-template-columns: 24px 1fr; gap: 8px; align-items: baseline; }
+ol.steps button:hover { background: var(--bg); }
+ol.steps button[aria-current="true"] { border-color: var(--ink); background: var(--bg); }
+ol.steps .n { font-weight: 700; color: var(--muted); }
+ol.steps .fnname { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+ol.steps .who { display: block; color: var(--muted); font-size: 12.5px; }
+ol.steps li.skip button { opacity: .4; }
+ol.steps li.fail button { border-color: var(--bad); }
+ol.steps li.soft button { border-color: var(--warn); }
+ol.steps li.sep { color: var(--muted); font-size: 12.5px; margin: 8px 0 4px 10px; }
+.detail h2 { font-size: 16px; margin: 0 0 2px; }
+.detail .who { color: var(--muted); margin: 0 0 10px; }
+.detail dl { margin: 0; }
+.detail dt { font-weight: 600; margin-top: 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.detail dd { margin: 2px 0 0; }
+.detail .status { margin-top: 10px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--warn); background: var(--warn-bg); }
+.detail .status.fail { border-color: var(--bad); background: var(--bad-bg); }
+.detail .status.skip { border-color: var(--line); background: var(--bg); color: var(--muted); }
+.detail pre { margin: 4px 0 0; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  overflow-x: auto; font-size: 12.5px; }
+footer { color: var(--muted); font-size: 13px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Các service gọi nhau thế nào</h1>
+  <p class="sub">Sơ đồ tuần tự cho bản microservice: mỗi mũi tên là một lời gọi thật trong code. Bấm vào một bước để xem hàm, file, dữ liệu gửi nhận và chuyện gì xảy ra khi nó lỗi.</p>
+
+  <div class="tabs" role="tablist" id="tabs"></div>
+
+  <div class="card">
+    <p class="intro" id="intro"></p>
+    <div class="toggles" id="toggles"></div>
+    <div class="result" id="result" role="status"></div>
+    <div class="scroll"><svg id="diagram" role="img" aria-label="Sơ đồ tuần tự"></svg></div>
+    <div class="legend">
+      <span class="l-http">HTTP (client ↔ gateway)</span>
+      <span class="l-grpc">gRPC</span>
+      <span class="l-sql">SQL / MinIO</span>
+      <span class="l-nats">NATS (sự kiện, một chiều)</span>
+      <span class="l-ret">giá trị trả về</span>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div class="card"><ol class="steps" id="steps"></ol></div>
+    <div class="card detail" id="detail"></div>
+  </div>
+
+  <footer>Mọi bước đều lấy từ code trong <code>microservices/</code> và <code>internal/</code>. Gateway là cửa duy nhất ra ngoài; các service nói chuyện với nhau bằng gRPC, không dùng HTTP nội bộ.</footer>
+</main>
+
+<script>
+(function () {
+  // ---- participants (kind decides the colour) ----
+  var P = {
+    client:  { label: 'Client',            kind: 'client' },
+    gateway: { label: 'Gateway',           kind: 'gateway' },
+    auth:    { label: 'Auth',              kind: 'svc' },
+    post:    { label: 'Post',              kind: 'svc' },
+    social:  { label: 'Social',            kind: 'svc' },
+    feed:    { label: 'Feed',              kind: 'svc' },
+    pgauth:  { label: 'Postgres (auth)',   kind: 'db' },
+    pgpost:  { label: 'Postgres (post)',   kind: 'db' },
+    pgsoc:   { label: 'Postgres (social)', kind: 'db' },
+    minio:   { label: 'MinIO',             kind: 'db' },
+    nats:    { label: 'NATS',              kind: 'bus' }
+  };
+
+  // Step: from, to, kind (http|grpc|sql|nats|self), fn (label on the arrow), ret (dashed return label),
+  // who (short line in the list), what, code, send, recv, fail (what the client sees), needs (services that
+  // must be up), soft (failure is only logged), async (never fails the request), par (parallel group), sep (divider).
+  var SCENARIOS = [
+    {
+      id: 'create', tab: 'Tạo post',
+      intro: 'Đăng một ảnh. Gateway chỉ kiểm token rồi chuyển ảnh sang Post bằng một stream gRPC; Post tự hỏi Auth lấy tên tác giả, ghi ảnh vào MinIO, ghi dòng vào DB của nó, rồi báo cho cả hệ thống bằng một event.',
+      participants: ['client', 'gateway', 'post', 'auth', 'pgpost', 'minio', 'nats', 'feed'],
+      toggles: [['auth', 'Auth'], ['post', 'Post'], ['minio', 'MinIO'], ['nats', 'NATS'], ['feed', 'Feed']],
+      ok: '201 Created, body {id, author, caption, image_url, created_at}',
+      steps: [
+        { from: 'client', to: 'gateway', kind: 'http', fn: 'POST /posts', who: 'Client gửi ảnh lên Gateway',
+          what: 'Request multipart/form-data gồm phần image (JPEG hoặc PNG) và phần caption, kèm header Authorization: Bearer <jwt>.',
+          code: 'microservices/gateway/routes_post.go → registerPosts',
+          send: 'POST /posts\nAuthorization: Bearer <jwt>\nContent-Type: multipart/form-data\n  caption=...  image=<bytes>',
+          recv: 'Gateway chặn thân request ở 6 MiB (5 MiB ảnh + dư cho multipart).' },
+        { from: 'gateway', kind: 'self', fn: 'jwtutil.Verify + WithUser', who: 'Gateway xác thực token',
+          what: 'Gateway tự kiểm chữ ký và hạn của JWT bằng chính khoá bí mật (không hỏi Auth), lấy user id, rồi gắn id đó vào metadata gRPC x-user-id cho mọi lời gọi tiếp theo.',
+          code: 'microservices/gateway/http.go → require; internal/jwtutil → Verify; internal/grpcutil → WithUser',
+          send: 'token (Bearer)', recv: 'userID = 7  →  metadata  x-user-id: 7',
+          fail: 'Thiếu hoặc sai token: 401 unauthorized (không có lời gọi nào sang service).' },
+        { from: 'gateway', to: 'post', kind: 'grpc', fn: 'Post.CreatePost (stream)', who: 'Gateway mở stream gRPC sang Post',
+          what: 'Client-streaming: Gateway gửi một message Meta{caption}, rồi các chunk ảnh 32 KiB, không giữ cả ảnh trong bộ nhớ. Caption được kiểm trước (tối đa 500 ký tự, UTF-8 hợp lệ).',
+          code: 'microservices/gateway/routes_post.go → createPost',
+          send: 'metadata x-user-id: 7\nCreatePostRequest{ meta: {caption} }\nCreatePostRequest{ chunk: <32 KiB> } × N', recv: 'chờ PostReply sau khi đóng stream',
+          needs: ['post'], fail: { status: '503', code: 'unavailable', text: 'Post không phản hồi: gateway đổi lỗi gRPC Unavailable thành 503.' } },
+        { from: 'post', kind: 'self', fn: 'UserID + gom ảnh + kiểm tra', who: 'Post nhận stream và kiểm tra',
+          what: 'Post đọc user id từ metadata x-user-id (không bao giờ từ body), gom các chunk vào bộ đệm, vượt 5 MiB thì dừng ngay. Sau đó kiểm caption, đoán loại ảnh từ byte đầu (chỉ JPEG/PNG). Chưa ghi gì ra ngoài.',
+          code: 'microservices/post/main.go → CreatePost',
+          send: '—', recv: 'ảnh ≤ 5 MiB, caption ≤ 500 ký tự',
+          fail: 'Ảnh quá 5 MiB: ResourceExhausted → 413. Thiếu ảnh, sai loại hoặc caption sai: InvalidArgument → 400. Không có gì được lưu.' },
+        { from: 'post', to: 'auth', kind: 'grpc', fn: 'Auth.GetUsers', ret: 'names{id→username}', who: 'Post hỏi Auth tên tác giả',
+          what: 'Post không có bảng users và không được đọc DB của Auth, nên hỏi Auth qua gRPC. Tên được sao chép vào dòng bài (author_name) để sau này không phải hỏi lại. Auth tra bảng users trong DB của nó.',
+          code: 'microservices/post/main.go → CreatePost;  microservices/auth/main.go → GetUsers',
+          send: 'GetUsersRequest{ ids: [7] }', recv: 'GetUsersReply{ names: {7: "an"} }',
+          needs: ['auth'], fail: { status: '503', code: 'unavailable', text: 'Auth chết nên không có tên tác giả: không đăng được ảnh. (Nếu user id không còn trong Auth thì trả 401.)' } },
+        { from: 'post', to: 'minio', kind: 'sql', fn: 'PutObject', ret: 'ok', who: 'Post ghi ảnh vào MinIO',
+          what: 'Ảnh được ghi vào bucket photos với key "<userID>/<ngẫu nhiên>.png". Chỉ đến bước này mới có dữ liệu được ghi ra ngoài.',
+          code: 'microservices/post/main.go → CreatePost',
+          send: 'bucket=photos  key=7/a27d…png  bytes', recv: 'ok',
+          needs: ['minio'], fail: { status: '503', code: 'unavailable', text: 'MinIO lỗi: "image storage error". Chưa có dòng nào trong DB.' } },
+        { from: 'post', to: 'pgpost', kind: 'sql', fn: 'INSERT INTO posts', ret: 'id, created_at', who: 'Post ghi dòng vào DB của mình',
+          what: 'Dòng bài lưu author_id, author_name (bản sao), caption, image_key. DB này chỉ role "post" truy cập được. Nếu INSERT lỗi, Post xoá ảnh vừa ghi để không để lại file mồ côi.',
+          code: 'microservices/post/main.go → CreatePost; microservices/post/schema.sql',
+          send: 'INSERT INTO posts (author_id, author_name, caption, image_key) …', recv: 'id = 118, created_at' },
+        { from: 'post', to: 'nats', kind: 'nats', fn: 'Publish post.created', who: 'Post phát event post.created', soft: true, needs: ['nats'],
+          what: 'Sau khi đã commit, Post báo cho hệ thống. Không chờ ai trả lời. Event mang image_key (không mang URL vì URL ký sẵn hết hạn sau 1 giờ).',
+          code: 'internal/events/events.go → Publish',
+          send: '{"post_id":118,"author_id":7,"author_name":"an","caption":"…","image_key":"7/a27d…png","created_at_micro":…}', recv: '—',
+          fail: 'Lỗi publish chỉ ghi log, request vẫn thành công. Hậu quả: Feed (chế độ event) sẽ không bao giờ biết bài này.' },
+        { from: 'post', to: 'gateway', kind: 'grpc', fn: 'SendAndClose(PostReply)', who: 'Post trả kết quả cho Gateway',
+          what: 'PostReply có id, author, caption, image_key và image_url. URL là presigned URL của MinIO, ký bằng host localhost:9000 để máy bên ngoài mở được (ký xong ngay trong bộ nhớ, không gọi mạng).',
+          code: 'microservices/post/main.go → reply',
+          send: 'PostReply{ id, author, caption, image_url, created_at_micro, image_key }', recv: '—' },
+        { from: 'gateway', to: 'client', kind: 'http', fn: '201 Created', who: 'Gateway trả JSON cho Client',
+          what: 'Gateway đổi PostReply thành JSON đúng hợp đồng REST. Nếu bất kỳ bước gRPC nào ở trên lỗi thì đây là chỗ đổi mã gRPC thành mã HTTP: NotFound→404, AlreadyExists→409, InvalidArgument→400, Unauthenticated→401, ResourceExhausted→413, Unavailable→503.',
+          code: 'microservices/gateway/http.go → writeError; routes_post.go → postJSON',
+          send: '201 {"id":118,"author":"an","caption":"…","image_url":"http://localhost:9000/photos/…","created_at":"…"}', recv: '—' },
+        { sep: 'Sau khi đã trả lời client (chỉ khi FEED_MODE=event)' },
+        { from: 'nats', to: 'feed', kind: 'nats', fn: 'post.created', who: 'NATS chuyển event cho Feed', async: true, soft: true, needs: ['nats', 'feed'],
+          what: 'Feed đã đăng ký nghe subject post.created. NATS ở đây là pub/sub thường: giao tối đa một lần, không lưu, không phát lại.',
+          code: 'microservices/feed/main.go → startEventMode',
+          send: 'message post.created', recv: '—',
+          fail: 'Feed đang tắt hoặc NATS chết lúc đó: event mất vĩnh viễn, bài có trong Post nhưng không có trong Feed.' },
+        { from: 'feed', kind: 'self', fn: 'ReadModel.Apply → INSERT posts', who: 'Feed lưu bản sao của bài', async: true, soft: true, needs: ['feed'],
+          what: 'Feed ghi một dòng vào bảng posts của chính nó (DB feed). INSERT … ON CONFLICT DO NOTHING nên nhận trùng event cũng không sao. Từ đây xem feed không cần gọi Post nữa.',
+          code: 'microservices/feed/readmodel.go → Apply',
+          send: '—', recv: 'dòng mới trong DB feed' }
+      ]
+    },
+    {
+      id: 'login', tab: 'Đăng nhập',
+      intro: 'Đăng nhập để lấy JWT. Chỉ Auth biết mật khẩu và ký token; từ đó Gateway tự kiểm token mà không phải hỏi Auth nữa.',
+      participants: ['client', 'gateway', 'auth', 'pgauth'],
+      toggles: [['auth', 'Auth']],
+      ok: '200 OK, body {token}',
+      steps: [
+        { from: 'client', to: 'gateway', kind: 'http', fn: 'POST /login', who: 'Client gửi username và password',
+          what: 'JSON {username, password}. Gateway giới hạn thân request 64 KiB.',
+          code: 'microservices/gateway/routes_auth.go → registerAuth',
+          send: '{"username":"an","password":"pw123456"}', recv: '—',
+          fail: 'JSON sai hoặc thiếu trường: 400 bad_request.' },
+        { from: 'gateway', to: 'auth', kind: 'grpc', fn: 'Auth.Login', who: 'Gateway chuyển sang Auth',
+          what: 'Route này không cần JWT. Gateway chỉ đổi JSON thành message Credentials rồi gọi Auth.',
+          code: 'microservices/gateway/routes_auth.go',
+          send: 'Credentials{ username, password }', recv: 'Token{ token }',
+          needs: ['auth'], fail: { status: '503', code: 'unavailable', text: 'Auth chết: không ai đăng nhập hay đăng ký được.' } },
+        { from: 'auth', to: 'pgauth', kind: 'sql', fn: 'SELECT id, password_hash', ret: 'row', who: 'Auth tra user trong DB của mình',
+          what: 'Tìm theo username. Không có dòng nào, hoặc mật khẩu sai, đều trả cùng một lỗi để không lộ username nào tồn tại.',
+          code: 'microservices/auth/main.go → Login',
+          send: 'SELECT id, password_hash FROM users WHERE username = $1', recv: 'id, password_hash',
+          fail: 'Sai thông tin: Unauthenticated → 401 unauthorized.' },
+        { from: 'auth', kind: 'self', fn: 'bcrypt.Compare + jwtutil.Sign', who: 'Auth so mật khẩu và ký token',
+          what: 'bcrypt so mật khẩu với hash. Khớp thì ký JWT HS256 có subject là user id, hạn 24 giờ.',
+          code: 'microservices/auth/main.go → Login; internal/jwtutil → Sign',
+          send: '—', recv: 'JWT HS256, sub=7, hạn 24h' },
+        { from: 'auth', to: 'gateway', kind: 'grpc', fn: 'Token', who: 'Auth trả token', what: 'Token{ token: "eyJ…" }.',
+          code: 'microservices/auth/main.go → Login', send: 'Token{ token }', recv: '—' },
+        { from: 'gateway', to: 'client', kind: 'http', fn: '200 {token}', who: 'Gateway trả token cho Client',
+          what: 'Client giữ token này và gửi trong header Authorization của mọi request sau.',
+          code: 'microservices/gateway/routes_auth.go', send: '200 {"token":"eyJ…"}', recv: '—' },
+        { sep: 'Những request sau đó' },
+        { from: 'client', to: 'gateway', kind: 'http', fn: 'Authorization: Bearer', who: 'Client gửi token ở mọi request',
+          what: 'Từ đây Auth không còn nằm trong luồng xác thực.',
+          code: 'microservices/gateway/http.go → require', send: 'Authorization: Bearer eyJ…', recv: '—' },
+        { from: 'gateway', kind: 'self', fn: 'jwtutil.Verify', who: 'Gateway tự kiểm token',
+          what: 'Gateway dùng cùng JWT_SECRET với Auth để kiểm chữ ký và hạn, không gọi sang Auth. Vì thế Auth chết thì token cũ vẫn xác thực được; chỉ đăng nhập mới và những chỗ cần tên người dùng mới lỗi.',
+          code: 'internal/jwtutil/jwtutil.go → Verify', send: '—', recv: 'userID = 7' }
+      ]
+    },
+    {
+      id: 'like', tab: 'Like một bài',
+      intro: 'Like là luồng điển hình khi một service phải kiểm tra service khác: Social không có bảng posts, nên hỏi Post xem bài có tồn tại không. Chú ý: Like không gọi Auth.',
+      participants: ['client', 'gateway', 'social', 'post', 'pgsoc', 'nats', 'feed'],
+      toggles: [['social', 'Social'], ['post', 'Post'], ['auth', 'Auth'], ['nats', 'NATS'], ['feed', 'Feed']],
+      ok: '204 No Content',
+      steps: [
+        { from: 'client', to: 'gateway', kind: 'http', fn: 'PUT /posts/{id}/like', who: 'Client gửi yêu cầu like',
+          what: 'Không có body. Id trong đường dẫn không phải số dương thì Gateway trả 404 ngay, không gọi service nào.',
+          code: 'microservices/gateway/routes_social.go → registerSocial',
+          send: 'PUT /posts/118/like\nAuthorization: Bearer <jwt>', recv: '—' },
+        { from: 'gateway', kind: 'self', fn: 'jwtutil.Verify + WithUser', who: 'Gateway xác thực token',
+          what: 'Giống mọi route khác: kiểm JWT, gắn x-user-id.',
+          code: 'microservices/gateway/http.go → require', send: '—', recv: 'x-user-id: 7',
+          fail: 'Token sai: 401.' },
+        { from: 'gateway', to: 'social', kind: 'grpc', fn: 'Social.Like', who: 'Gateway gọi Social',
+          what: 'Gửi PostRef{id}. Người gọi lấy từ metadata x-user-id.',
+          code: 'microservices/gateway/routes_social.go; microservices/social/main.go → Like',
+          send: 'PostRef{ id: 118 }', recv: 'Empty',
+          needs: ['social'], fail: { status: '503', code: 'unavailable', text: 'Social chết: không follow, like hay comment được.' } },
+        { from: 'social', to: 'post', kind: 'grpc', fn: 'Post.PostExists', ret: 'ExistsReply', who: 'Social hỏi Post bài có tồn tại không',
+          what: 'Social không có khoá ngoại sang bảng posts (đó là DB của Post), nên kiểm tra bằng gRPC. Không tồn tại thì NotFound → 404.',
+          code: 'microservices/social/main.go → requirePost; microservices/post/main.go → PostExists',
+          send: 'PostRef{ id: 118 }', recv: 'ExistsReply{ exists: true }',
+          needs: ['post'], fail: { status: '503', code: 'unavailable', text: 'Post chết: không kiểm được bài nên không like được. (Bài không tồn tại thì 404.)' } },
+        { from: 'social', kind: 'self', fn: 'lockEdge(post, user)', who: 'Social khoá theo cạnh like',
+          what: 'Một khoá nhỏ theo cặp (bài, người dùng) bao quanh "ghi DB rồi publish event". Nhờ vậy hai thao tác like/unlike nhanh liên tiếp được phát event đúng thứ tự đã commit.',
+          code: 'microservices/social/main.go → lockEdge', send: '—', recv: '—' },
+        { from: 'social', to: 'pgsoc', kind: 'sql', fn: 'INSERT INTO likes … DO NOTHING', ret: 'ok', who: 'Social ghi like vào DB của mình',
+          what: 'ON CONFLICT DO NOTHING làm like idempotent: like hai lần vẫn chỉ có một dòng.',
+          code: 'microservices/social/main.go → Like; microservices/social/schema.sql',
+          send: 'INSERT INTO likes (post_id, user_id) VALUES (118, 7) ON CONFLICT DO NOTHING', recv: 'ok' },
+        { from: 'social', to: 'nats', kind: 'nats', fn: 'Publish like.set', who: 'Social phát event like.set', soft: true, needs: ['nats'],
+          what: 'Event mô tả trạng thái mới (liked: true), không phải "cộng một", nên nhận trùng không làm sai số like.',
+          code: 'internal/events/events.go → Publish', send: '{"post_id":118,"user_id":7,"liked":true}', recv: '—',
+          fail: 'Lỗi publish chỉ ghi log. Bấm like lại sẽ phát lại event và sửa được.' },
+        { from: 'social', to: 'gateway', kind: 'grpc', fn: 'Empty', who: 'Social trả kết quả', what: 'Không có dữ liệu trả về.',
+          code: 'microservices/social/main.go → Like', send: 'Empty', recv: '—' },
+        { from: 'gateway', to: 'client', kind: 'http', fn: '204 No Content', who: 'Gateway trả 204', what: 'Không có body.',
+          code: 'microservices/gateway/routes_social.go', send: '204', recv: '—' },
+        { sep: 'Sau khi đã trả lời client (chỉ khi FEED_MODE=event)' },
+        { from: 'nats', to: 'feed', kind: 'nats', fn: 'like.set', who: 'NATS chuyển event cho Feed', async: true, soft: true, needs: ['nats', 'feed'],
+          what: 'Feed đang nghe subject like.set.', code: 'microservices/feed/main.go → startEventMode',
+          send: 'message like.set', recv: '—', fail: 'Feed tắt: event mất, số like trong feed lệch cho đến khi có event mới cho cùng cặp (bài, người).' },
+        { from: 'feed', kind: 'self', fn: 'ReadModel.Apply → INSERT likes', who: 'Feed cập nhật bản sao', async: true, soft: true, needs: ['feed'],
+          what: 'Ghi (post_id, user_id) vào bảng likes của Feed. Số like trong feed là count(*) trên bảng này lúc đọc.',
+          code: 'microservices/feed/readmodel.go → Apply', send: '—', recv: 'dòng mới trong bảng likes' }
+      ]
+    },
+    {
+      id: 'feedsync', tab: 'Xem feed (sync)',
+      intro: 'FEED_MODE=sync: Feed không có dữ liệu riêng, mỗi lần xem là ghép từ ba service. Dữ liệu luôn mới, nhưng cần cả ba còn sống.',
+      participants: ['client', 'gateway', 'feed', 'social', 'post', 'auth'],
+      toggles: [['feed', 'Feed'], ['social', 'Social'], ['post', 'Post'], ['auth', 'Auth']],
+      ok: '200 OK, body {items: […], next}',
+      steps: [
+        { from: 'client', to: 'gateway', kind: 'http', fn: 'GET /feed?limit=20', who: 'Client xin một trang feed',
+          what: 'Có thể kèm before=<cursor> để lấy trang kế tiếp.',
+          code: 'microservices/gateway/routes_feed.go → registerFeed',
+          send: 'GET /feed?limit=20&before=…\nAuthorization: Bearer <jwt>', recv: '—' },
+        { from: 'gateway', kind: 'self', fn: 'Verify + kiểm limit/before', who: 'Gateway xác thực và kiểm tham số',
+          what: 'limit phải là số nguyên ≥ 1 (lớn hơn 50 thì cắt về 50). before phải là cursor hợp lệ "<micro>_<id>".',
+          code: 'microservices/gateway/routes_feed.go; internal/cursor → Parse', send: '—', recv: 'limit=20, before=…',
+          fail: 'limit hoặc before sai: 400 bad_request.' },
+        { from: 'gateway', to: 'feed', kind: 'grpc', fn: 'Feed.GetFeed', who: 'Gateway gọi Feed',
+          what: 'Người xem lấy từ metadata x-user-id, không nằm trong message.',
+          code: 'microservices/feed/main.go → GetFeed → syncFeed',
+          send: 'GetFeedRequest{ before, limit }', recv: 'GetFeedReply{ items, next }',
+          needs: ['feed'], fail: { status: '503', code: 'unavailable', text: 'Feed chết: không xem được feed.' } },
+        { from: 'feed', to: 'social', kind: 'grpc', fn: 'Social.ListFollowing', ret: 'ids', who: 'Feed hỏi Social mình follow ai',
+          what: 'Trả về danh sách id người mà người xem đang follow. Rỗng thì Feed trả ngay items = [].',
+          code: 'microservices/social/main.go → ListFollowing', send: 'UserRef{ id: 7 }', recv: 'UserIds{ ids: [2, 5, 9] }',
+          needs: ['social'], fail: { status: '503', code: 'unavailable', text: 'Social chết: feed trả 503, không trả dữ liệu thiếu.' } },
+        { from: 'feed', to: 'post', kind: 'grpc', fn: 'Post.ListPostsByAuthors', ret: 'posts', who: 'Feed hỏi Post bài của những người đó',
+          what: 'Xin limit+1 bài (thừa một bài để biết còn trang sau), mới nhất trước, theo cursor (created_at, id). Mỗi bài kèm image_url đã ký.',
+          code: 'microservices/post/main.go → ListPostsByAuthors', send: 'ListPostsRequest{ author_ids, before, limit: 21 }', recv: 'ListPostsReply{ posts }',
+          needs: ['post'], fail: { status: '503', code: 'unavailable', text: 'Post chết: feed trả 503.' } },
+        { from: 'feed', to: 'social', kind: 'grpc', fn: 'Social.CountsForPosts', ret: 'counts', who: 'Số like, comment, mình đã like chưa', par: 'g',
+          what: 'Một lời gọi cho cả trang: với mỗi post id trả likes, comments và liked_by_me cho người xem. Chạy song song với GetUsers.',
+          code: 'microservices/social/main.go → CountsForPosts', send: 'CountsRequest{ post_ids, viewer_id }', recv: 'CountsReply{ counts[] }',
+          needs: ['social'], fail: { status: '503', code: 'unavailable', text: 'Social chết: feed trả 503.' } },
+        { from: 'feed', to: 'auth', kind: 'grpc', fn: 'Auth.GetUsers', ret: 'names', who: 'Tên tác giả hiện tại', par: 'g',
+          what: 'Lấy username mới nhất của các tác giả (nếu thiếu thì dùng tên đã sao chép trong bài).',
+          code: 'microservices/auth/main.go → GetUsers', send: 'GetUsersRequest{ ids: authors }', recv: 'GetUsersReply{ names }',
+          needs: ['auth'], fail: { status: '503', code: 'unavailable', text: 'Auth chết: feed trả 503.' } },
+        { from: 'feed', kind: 'self', fn: 'ghép items, tính next', who: 'Feed ghép kết quả',
+          what: 'Ghép bài, số đếm và tên theo thứ tự của Post. Có bài thứ 21 thì cắt về 20 và next là cursor của bài thứ 20.',
+          code: 'microservices/feed/main.go → syncFeed', send: '—', recv: 'items (≤ 20), next' },
+        { from: 'feed', to: 'gateway', kind: 'grpc', fn: 'GetFeedReply', who: 'Feed trả cho Gateway',
+          what: 'Danh sách rỗng được Gateway in thành [], không bao giờ null.', code: 'microservices/gateway/routes_feed.go',
+          send: 'GetFeedReply{ items, next }', recv: '—' },
+        { from: 'gateway', to: 'client', kind: 'http', fn: '200 {items, next}', who: 'Gateway trả JSON',
+          what: 'next là null ở trang cuối.', code: 'microservices/gateway/routes_feed.go',
+          send: '200 {"items":[{id, author, caption, image_url, likes, comments, liked_by_me, created_at}],"next":"…"}', recv: '—' }
+      ]
+    },
+    {
+      id: 'feedevent', tab: 'Xem feed (event)',
+      intro: 'FEED_MODE=event: Feed giữ bản sao dữ liệu của riêng nó, cập nhật bằng event NATS. Lúc xem feed nó chỉ đọc DB của chính mình, nên vẫn trả 200 khi Auth, Post hay Social chết (dữ liệu có thể cũ).',
+      participants: ['client', 'gateway', 'feed', 'post', 'social', 'nats'],
+      toggles: [['feed', 'Feed'], ['nats', 'NATS'], ['auth', 'Auth'], ['post', 'Post'], ['social', 'Social']],
+      ok: '200 OK, body {items: […], next}',
+      steps: [
+        { sep: 'Trước đó: mỗi lần có ghi dữ liệu, event được chuyển vào Feed' },
+        { from: 'post', to: 'nats', kind: 'nats', fn: 'post.created', who: 'Post phát event khi có bài mới', async: true, soft: true, needs: ['post', 'nats'],
+          what: 'Mỗi bài mới là một message; mang đủ dữ liệu để Feed tự lưu mà không phải hỏi lại.',
+          code: 'microservices/post/main.go → CreatePost', send: 'post.created {post_id, author_name, caption, image_key, …}', recv: '—',
+          fail: 'Post hoặc NATS chết: không có event nào được phát đi.' },
+        { from: 'social', to: 'nats', kind: 'nats', fn: 'follow.set / like.set / comment.added', who: 'Social phát event khi follow, like, comment', async: true, soft: true, needs: ['social', 'nats'],
+          what: 'Ba loại event còn lại; follow.set và like.set mô tả trạng thái mới nên nhận trùng không sao.',
+          code: 'microservices/social/main.go → publish', send: 'like.set {post_id, user_id, liked}', recv: '—',
+          fail: 'Social hoặc NATS chết: không có event nào được phát đi.' },
+        { from: 'nats', to: 'feed', kind: 'nats', fn: 'chuyển cho Feed', who: 'NATS đẩy event sang Feed', async: true, soft: true, needs: ['nats', 'feed'],
+          what: 'Feed đăng ký 4 subject lúc khởi động. Pub/sub thường: giao tối đa một lần, event phát lúc Feed tắt là mất.',
+          code: 'microservices/feed/main.go → startEventMode', send: 'message', recv: '—',
+          fail: 'Event mất. Feed không có cơ chế tự bù: bản sao có thể thiếu bài hoặc lệch số like.' },
+        { from: 'feed', kind: 'self', fn: 'ReadModel.Apply', who: 'Feed ghi vào DB riêng', async: true, soft: true, needs: ['feed'],
+          what: 'Mỗi event là một thao tác "đặt": INSERT … ON CONFLICT DO NOTHING hoặc DELETE. Số like và comment được đếm bằng count(*) lúc đọc. Nhận trùng hay sai thứ tự vẫn ra cùng kết quả.',
+          code: 'microservices/feed/readmodel.go → Apply', send: '—', recv: 'bảng posts / follows / likes / comments trong DB feed' },
+        { sep: 'Khi người dùng xem feed' },
+        { from: 'client', to: 'gateway', kind: 'http', fn: 'GET /feed?limit=20', who: 'Client xin một trang feed',
+          what: 'Gateway kiểm token, limit và before như ở chế độ sync.', code: 'microservices/gateway/routes_feed.go',
+          send: 'GET /feed?limit=20\nAuthorization: Bearer <jwt>', recv: '—' },
+        { from: 'gateway', to: 'feed', kind: 'grpc', fn: 'Feed.GetFeed', who: 'Gateway gọi Feed',
+          what: 'Đây là lời gọi gRPC duy nhất trong cả luồng đọc.', code: 'microservices/feed/main.go → GetFeed → eventFeed',
+          send: 'GetFeedRequest{ before, limit }', recv: 'GetFeedReply{ items, next }',
+          needs: ['feed'], fail: { status: '503', code: 'unavailable', text: 'Chỉ khi chính Feed chết thì feed mới lỗi.' } },
+        { from: 'feed', kind: 'self', fn: 'ReadModel.Feed: follows JOIN posts', who: 'Feed truy vấn DB của mình',
+          what: 'Một truy vấn trên các bảng của Feed: bài của những người mình follow, mới nhất trước, cursor (created_at, id); số like và comment đếm bằng count(*). Không gọi service nào khác.',
+          code: 'microservices/feed/readmodel.go → Feed', send: 'SELECT … FROM follows JOIN posts …', recv: 'items + next' },
+        { from: 'feed', kind: 'self', fn: 'ký image_url từ image_key', who: 'Feed ký URL ảnh lúc đọc',
+          what: 'Bản sao chỉ lưu image_key vì URL ký sẵn hết hạn sau 1 giờ. Feed ký URL mới bằng thông tin truy cập MinIO (ký trong bộ nhớ, không gọi mạng nên không cần MinIO sống).',
+          code: 'microservices/feed/main.go → eventFeed', send: '—', recv: 'image_url (hạn 1 giờ)' },
+        { from: 'feed', to: 'gateway', kind: 'grpc', fn: 'GetFeedReply', who: 'Feed trả cho Gateway', what: 'items và next.',
+          code: 'microservices/feed/main.go → eventFeed', send: 'GetFeedReply{ items, next }', recv: '—' },
+        { from: 'gateway', to: 'client', kind: 'http', fn: '200 {items, next}', who: 'Gateway trả JSON',
+          what: 'Cùng định dạng với chế độ sync. Dữ liệu có thể cũ hơn trong lúc event chưa tới, hoặc mãi mãi nếu event đã mất.',
+          code: 'microservices/gateway/routes_feed.go', send: '200 {"items":[…],"next":"…"}', recv: '—' }
+      ]
+    }
+  ];
+
+  // ---- layout constants ----
+  var W = 1000, MARGIN = 62, TOP = 12, HEAD = 46, ROW_ARROW = 46, ROW_RET = 70, ROW_SELF = 48, ROW_SEP = 42;
+  var NS = 'http://www.w3.org/2000/svg';
+
+  var state = { sc: 0, sel: 0, down: {} };
+
+  function el(name, attrs, parent, text) {
+    var n = document.createElementNS(NS, name);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+  function h(tag, props, parent, text) {
+    var n = document.createElement(tag);
+    for (var k in props) { if (k === 'class') n.className = props[k]; else n.setAttribute(k, props[k]); }
+    if (text != null) n.textContent = text;
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+
+  // ---- what happens for the chosen "down" services ----
+  function evaluate(sc) {
+    var res = [], failed = null;
+    sc.steps.forEach(function (s, i) {
+      if (s.sep) { res.push('sep'); return; }
+      if (failed !== null) { res.push('skip'); return; }
+      var hit = (s.needs || []).filter(function (n) { return state.down[n]; });
+      if (!hit.length) { res.push('ok'); return; }
+      if (s.soft || s.async) { res.push('soft'); return; }
+      res.push('fail'); failed = i;
+    });
+    return { status: res, failed: failed };
+  }
+
+  // ---- render ----
+  function renderTabs() {
+    var box = document.getElementById('tabs');
+    box.innerHTML = '';
+    SCENARIOS.forEach(function (sc, i) {
+      var b = h('button', { role: 'tab', 'aria-selected': String(i === state.sc), type: 'button' }, box, sc.tab);
+      b.addEventListener('click', function () { state.sc = i; state.sel = firstStep(SCENARIOS[i]); state.down = {}; renderAll(); });
+    });
+  }
+  function firstStep(sc) { for (var i = 0; i < sc.steps.length; i++) if (!sc.steps[i].sep) return i; return 0; }
+
+  function renderToggles(sc) {
+    var box = document.getElementById('toggles');
+    box.innerHTML = '';
+    h('strong', {}, box, 'Thử tắt:');
+    sc.toggles.forEach(function (t) {
+      var lab = h('label', {}, box);
+      var cb = h('input', { type: 'checkbox' }, lab);
+      cb.checked = !!state.down[t[0]];
+      cb.addEventListener('change', function () { state.down[t[0]] = cb.checked; renderAll(); });
+      lab.appendChild(document.createTextNode(t[1]));
+    });
+  }
+
+  function renderResult(sc, ev) {
+    var box = document.getElementById('result');
+    box.className = 'result';
+    var downNames = sc.toggles.filter(function (t) { return state.down[t[0]]; }).map(function (t) { return t[1]; });
+    var soft = ev.status.indexOf('soft') >= 0;
+    if (ev.failed !== null) {
+      var s = sc.steps[ev.failed];
+      box.className = 'result fail';
+      box.innerHTML = '';
+      box.appendChild(document.createTextNode('Client nhận '));
+      h('b', {}, box, s.fail.status + ' ' + s.fail.code);
+      box.appendChild(document.createTextNode(' vì ' + s.fn + ' (bước ' + (stepNumber(sc, ev.failed)) + ') lỗi. Các bước sau không chạy.'));
+      return;
+    }
+    box.innerHTML = '';
+    h('b', {}, box, 'Client nhận ' + sc.ok + '.');
+    if (downNames.length && !soft) {
+      box.appendChild(document.createTextNode(' Dịch vụ đã tắt (' + downNames.join(', ') + ') không nằm trong đường đi của request này.'));
+    } else if (soft) {
+      box.className = 'result warn';
+      box.appendChild(document.createTextNode(' Nhưng có bước chỉ lỗi ngầm (màu vàng): request vẫn thành công, dữ liệu ở nơi khác có thể lệch.'));
+    }
+  }
+
+  function stepNumber(sc, idx) {
+    var n = 0;
+    for (var i = 0; i <= idx; i++) if (!sc.steps[i].sep) n++;
+    return n;
+  }
+
+  function renderDiagram(sc, ev) {
+    var svg = document.getElementById('diagram');
+    svg.innerHTML = '';
+    var n = sc.participants.length;
+    var gap = (W - 2 * MARGIN) / (n - 1);
+    var bw = Math.min(118, gap - 8);
+    var xs = {};
+    sc.participants.forEach(function (id, i) { xs[id] = MARGIN + i * gap; });
+
+    // rows
+    var y = TOP + HEAD + 18, rows = [];
+    sc.steps.forEach(function (s) {
+      var hgt = s.sep ? ROW_SEP : (s.kind === 'self' ? ROW_SELF : (s.ret ? ROW_RET : ROW_ARROW));
+      rows.push({ y: y, h: hgt });
+      y += hgt;
+    });
+    var H = y + 10;
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+    // arrow heads, one per colour
+    var defs = el('defs', {}, svg);
+    ['http', 'grpc', 'sql', 'nats', 'self', 'bad', 'warn'].forEach(function (k) {
+      var m = el('marker', { id: 'ah-' + k, viewBox: '0 0 10 10', refX: '9', refY: '5', markerWidth: '8', markerHeight: '8', orient: 'auto-start-reverse' }, defs);
+      el('path', { d: 'M0,0 L10,5 L0,10 z', 'class': 'm-' + k }, m);
+    });
+
+    // parallel group backdrops
+    var parRanges = {};
+    sc.steps.forEach(function (s, i) {
+      if (!s.par) return;
+      var r = parRanges[s.par] || (parRanges[s.par] = { a: rows[i].y, b: rows[i].y + rows[i].h });
+      r.a = Math.min(r.a, rows[i].y); r.b = Math.max(r.b, rows[i].y + rows[i].h);
+    });
+    Object.keys(parRanges).forEach(function (k) {
+      var r = parRanges[k];
+      el('rect', { x: 8, y: r.a - 2, width: W - 16, height: r.b - r.a + 2, rx: 8, 'class': 'parbox' }, svg);
+      el('text', { x: 16, y: r.a + 11, 'class': 'partxt' }, svg, 'song song');
+    });
+
+    // lifelines + headers
+    sc.participants.forEach(function (id) {
+      var p = P[id], x = xs[id];
+      el('line', { x1: x, y1: TOP + HEAD, x2: x, y2: H - 6, 'class': 'life' }, svg);
+      var g = el('g', { 'class': 'k-' + p.kind }, svg);
+      el('rect', { x: x - bw / 2, y: TOP, width: bw, height: HEAD, rx: 8, 'class': 'box' }, g);
+      var parts = p.label.split(' (');
+      if (parts.length === 2) {
+        el('text', { x: x, y: TOP + 19, 'text-anchor': 'middle', 'class': 'ptitle' }, g, parts[0]);
+        el('text', { x: x, y: TOP + 35, 'text-anchor': 'middle', 'class': 'muted' }, g, '(' + parts[1]);
+      } else {
+        el('text', { x: x, y: TOP + 28, 'text-anchor': 'middle', 'class': 'ptitle' }, g, p.label);
+      }
+    });
+
+    // steps
+    var num = 0;
+    sc.steps.forEach(function (s, i) {
+      var r = rows[i];
+      if (s.sep) {
+        var d = el('g', { 'class': 'divider' }, svg);
+        el('line', { x1: 14, y1: r.y + r.h / 2, x2: W - 14, y2: r.y + r.h / 2 }, d);
+        el('text', { x: W / 2, y: r.y + r.h / 2 + 4 }, d, s.sep);
+        return;
+      }
+      num++;
+      var st = ev.status[i];
+      var g = el('g', { 'class': 'step' + (state.sel === i ? ' sel' : '') + (st === 'fail' ? ' fail' : '') + (st === 'soft' ? ' soft' : '') + (st === 'skip' ? ' skip' : ''),
+                        tabindex: '0', role: 'button', 'aria-label': 'Bước ' + num + ': ' + s.fn }, svg);
+      el('rect', { x: 4, y: r.y, width: W - 8, height: r.h, rx: 6, 'class': 'hit' }, g);
+      var kind = s.kind, mk = st === 'fail' ? 'bad' : (st === 'soft' ? 'warn' : kind);
+      var x1 = xs[s.from], cy;
+      if (kind === 'self') {
+        var bwid = 230, bx = Math.max(8, Math.min(W - 8 - bwid, x1 - bwid / 2));
+        cy = r.y + 24;
+        el('rect', { x: bx, y: cy - 13, width: bwid, height: 26, rx: 6, 'class': 'selfbox' }, g);
+        el('text', { x: bx + bwid / 2, y: cy + 4, 'text-anchor': 'middle', 'class': 'fn' }, g, s.fn);
+        badge(g, bx - 12, cy, num);
+      } else {
+        var x2 = xs[s.to], dir = x2 > x1 ? 1 : -1;
+        cy = r.y + 22;
+        el('line', { x1: x1, y1: cy, x2: x2 - dir * 2, y2: cy, 'class': 'arrow c-' + (st === 'fail' ? 'self' : kind), 'marker-end': 'url(#ah-' + mk + ')' }, g);
+        el('text', { x: (x1 + x2) / 2, y: cy - 7, 'text-anchor': 'middle', 'class': 'fn' }, g, s.fn);
+        badge(g, x1 - dir * 14, cy, num);
+        if (s.ret && st !== 'fail') { // a failed call gets no reply
+          var ry = cy + 26;
+          el('line', { x1: x2, y1: ry, x2: x1 + dir * 2, y2: ry, 'class': 'arrow ret c-' + (st === 'fail' ? 'self' : kind), 'marker-end': 'url(#ah-' + mk + ')' }, g);
+          el('text', { x: (x1 + x2) / 2, y: ry - 7, 'text-anchor': 'middle', 'class': 'fn muted' }, g, s.ret);
+        }
+      }
+      (function (idx) {
+        g.addEventListener('click', function () { state.sel = idx; renderAll(); });
+        g.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); state.sel = idx; renderAll(); } });
+      })(i);
+    });
+  }
+  function badge(g, x, y, num) {
+    el('circle', { cx: x, cy: y, r: 9, 'class': 'badge' }, g);
+    el('text', { x: x, y: y + 4, 'class': 'badgetxt' }, g, String(num));
+  }
+
+  function renderList(sc, ev) {
+    var ol = document.getElementById('steps');
+    ol.innerHTML = '';
+    var num = 0;
+    sc.steps.forEach(function (s, i) {
+      if (s.sep) { h('li', { 'class': 'sep' }, ol, s.sep); return; }
+      num++;
+      var st = ev.status[i];
+      var li = h('li', { 'class': st === 'ok' ? '' : st }, ol);
+      var b = h('button', { type: 'button' }, li);
+      if (state.sel === i) b.setAttribute('aria-current', 'true');
+      h('span', { 'class': 'n' }, b, String(num));
+      var box = h('span', {}, b);
+      h('span', { 'class': 'fnname' }, box, s.fn);
+      h('span', { 'class': 'who' }, box, s.who);
+      (function (idx) { b.addEventListener('click', function () { state.sel = idx; renderAll(); }); })(i);
+    });
+  }
+
+  function renderDetail(sc, ev) {
+    var box = document.getElementById('detail');
+    box.innerHTML = '';
+    var i = state.sel, s = sc.steps[i];
+    if (!s || s.sep) return;
+    var st = ev.status[i];
+    h('h2', {}, box, 'Bước ' + stepNumber(sc, i) + ': ' + s.fn);
+    var who = s.kind === 'self' ? P[s.from].label : P[s.from].label + ' → ' + P[s.to].label;
+    h('p', { 'class': 'who' }, box, who);
+    if (st === 'fail') h('div', { 'class': 'status fail' }, box, 'Bước này lỗi khi bạn tắt dịch vụ: client nhận ' + s.fail.status + ' ' + s.fail.code + '. ' + s.fail.text);
+    else if (st === 'soft') h('div', { 'class': 'status' }, box, 'Dịch vụ cần cho bước này đã tắt. Request không bị hỏng, chỉ không có tác dụng ở bước này. ' + (typeof s.fail === 'string' ? s.fail : ''));
+    else if (st === 'skip') h('div', { 'class': 'status skip' }, box, 'Bước này không chạy vì một bước trước đó đã lỗi.');
+    var dl = h('dl', {}, box);
+    h('dt', {}, dl, 'Làm gì'); h('dd', {}, dl, s.what);
+    h('dt', {}, dl, 'Trong code'); h('dd', {}, dl, s.code);
+    if (s.send && s.send !== '—') { h('dt', {}, dl, 'Gửi'); var d1 = h('dd', {}, dl); h('pre', {}, d1, s.send); }
+    if (s.recv && s.recv !== '—') { h('dt', {}, dl, 'Nhận'); var d2 = h('dd', {}, dl); h('pre', {}, d2, s.recv); }
+    var failText = typeof s.fail === 'string' ? s.fail : (s.fail ? s.fail.text : '');
+    if (failText) { h('dt', {}, dl, 'Khi lỗi'); h('dd', {}, dl, (s.fail && s.fail.status ? s.fail.status + ' ' + s.fail.code + '. ' : '') + failText); }
+    if (s.needs && s.needs.length) { h('dt', {}, dl, 'Cần các dịch vụ'); h('dd', {}, dl, s.needs.join(', ')); }
+  }
+
+  function renderAll() {
+    var sc = SCENARIOS[state.sc];
+    var ev = evaluate(sc);
+    document.getElementById('intro').textContent = sc.intro;
+    renderTabs(); renderToggles(sc); renderResult(sc, ev); renderDiagram(sc, ev); renderList(sc, ev); renderDetail(sc, ev);
+  }
+
+  state.sel = firstStep(SCENARIOS[0]);
+  renderAll();
+})();
+</script>
+</body>
+</html>
