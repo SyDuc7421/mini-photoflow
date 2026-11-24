@@ -5,96 +5,247 @@ info:
   description: |
     Contract shared by the monolith and the microservice build.
     Both must pass tests/contract with identical behavior.
-    Auth: `Authorization: Bearer <jwt>` on every route except /register and /login.
-    JWT lifetime 24h. Caption max 500 Unicode characters. Image max 5 MiB (5242880 bytes), JPEG or PNG; anything else is 400.
-    `author` is always the author's username (string). Feed `limit` above 50 is clamped to 50.
-    A feed that depends on an unavailable service answers 503 `unavailable`.
-    Follow/unfollow/like/unlike are idempotent and always answer 204 when the target exists.
-    DELETE (unfollow/unlike) answers 204 even if nothing was set.
+
+    **Auth.** `Authorization: Bearer <jwt>` on every route except `/register` and `/login`.
+    Get a token from `/login`, then use the Authorize button. JWT lifetime is 24h.
+
+    **Rules.**
+    - Caption: at most 500 Unicode characters (characters, not bytes).
+    - Image: JPEG or PNG, at most 5 MiB (5242880 bytes); anything else is 400, and a larger image is 413 with nothing stored.
+    - `author` is always the author's username (string).
+    - Follow/unfollow/like/unlike are idempotent and answer 204 when the target exists; DELETE answers 204 even if nothing was set.
+    - An `{id}` in a path that is not a positive integer names nothing, so it answers 404.
+    - Request bodies that are not valid UTF-8, or that contain a NUL character, are 400.
+    - `503 unavailable` means a database or a service the route depends on is down. In the microservice build the feed in `sync` mode needs every service; in `event` mode it needs only itself.
+servers:
+  - url: http://localhost:8082
+    description: Swagger UI "Try it out". A CORS proxy (api/docker-compose.yml) in front of the build running on port 8080.
+  - url: http://localhost:8080
+    description: Direct access to the build (curl, tests/contract).
+tags:
+  - {name: Account}
+  - {name: Posts}
+  - {name: Social}
+  - {name: Feed}
+security:
+  - bearerAuth: []
 paths:
   /register:
     post:
-      summary: Create account. Body {username, password}.
+      tags: [Account]
+      summary: Create an account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Credentials"}
       responses:
-        "201": {description: 'Created. Body {id, username}'}
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/User"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/Unavailable"}
   /login:
     post:
-      summary: Body {username, password}.
-      responses:
-        "200": {description: 'Body {token}'}
-        "400": {$ref: "#/components/responses/BadRequest"}
-        "401": {$ref: "#/components/responses/Unauthorized"}
-  /posts:
-    post:
-      summary: Create post. multipart/form-data with `image` (file) and `caption` (text, optional).
-      responses:
-        "201": {description: 'Body {id, author, caption, image_url, created_at}'}
-        "400": {$ref: "#/components/responses/BadRequest"}
-        "401": {$ref: "#/components/responses/Unauthorized"}
-        "413": {$ref: "#/components/responses/PayloadTooLarge"}
-  /posts/{id}:
-    get:
-      responses:
-        "200": {description: 'Body {id, author, caption, image_url, created_at}'}
-        "401": {$ref: "#/components/responses/Unauthorized"}
-        "404": {$ref: "#/components/responses/NotFound"}
-  /posts/{id}/like:
-    put:
-      responses:
-        "204": {description: Liked (idempotent)}
-        "401": {$ref: "#/components/responses/Unauthorized"}
-        "404": {$ref: "#/components/responses/NotFound"}
-    delete:
-      responses:
-        "204": {description: Unliked (idempotent)}
-        "401": {$ref: "#/components/responses/Unauthorized"}
-        "404": {$ref: "#/components/responses/NotFound"}
-  /posts/{id}/comments:
-    post:
-      summary: Body {text}.
-      responses:
-        "201": {description: 'Body {id, post_id, author, text, created_at}'}
-        "400": {$ref: "#/components/responses/BadRequest"}
-        "401": {$ref: "#/components/responses/Unauthorized"}
-        "404": {$ref: "#/components/responses/NotFound"}
-    get:
-      responses:
-        "200": {description: 'Body {items: [comment]} oldest first'}
-        "401": {$ref: "#/components/responses/Unauthorized"}
-        "404": {$ref: "#/components/responses/NotFound"}
-  /users/{id}/follow:
-    put:
-      responses:
-        "204": {description: Following (idempotent)}
-        "400": {$ref: "#/components/responses/BadRequest"}
-        "401": {$ref: "#/components/responses/Unauthorized"}
-        "404": {$ref: "#/components/responses/NotFound"}
-    delete:
-      responses:
-        "204": {description: Not following (idempotent)}
-        "401": {$ref: "#/components/responses/Unauthorized"}
-        "404": {$ref: "#/components/responses/NotFound"}
-  /feed:
-    get:
-      summary: Posts of followed users, newest first.
-      parameters:
-        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 50, default: 20}}
-        - {name: before, in: query, schema: {type: string}, description: 'Opaque cursor from previous `next`'}
+      tags: [Account]
+      summary: Get a JWT
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Credentials"}
       responses:
         "200":
+          description: Signed token, valid for 24 hours
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Token"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+  /posts:
+    post:
+      tags: [Posts]
+      summary: Create a post
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: JPEG or PNG, at most 5 MiB. Sent once.
+                caption:
+                  type: string
+                  maxLength: 500
+                  description: Optional, at most 500 characters. Sent at most once.
+            encoding:
+              image: {contentType: "image/jpeg, image/png"}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Post"}
+        "400":
           description: |
-            Body {items: [item], next: string|null}; `next` is null on the last page. `items` is `[]` when empty, never null.
-            item = {id, author, caption, image_url, likes, comments, liked_by_me, created_at}.
-            Ordered by (created_at, id) descending; cursor paging never repeats or skips a post.
+            400 Missing image, not JPEG/PNG, caption over 500 characters or not valid UTF-8,
+            `image` or `caption` sent twice, or the body is not multipart/form-data
+          content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "413": {$ref: "#/components/responses/PayloadTooLarge"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+  /posts/{id}:
+    get:
+      tags: [Posts]
+      summary: Get one post
+      parameters:
+        - {$ref: "#/components/parameters/PostId"}
+      responses:
+        "200":
+          description: The post
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Post"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+  /posts/{id}/like:
+    put:
+      tags: [Social]
+      summary: Like a post (idempotent)
+      parameters:
+        - {$ref: "#/components/parameters/PostId"}
+      responses:
+        "204": {description: Liked. Liking twice counts once.}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+    delete:
+      tags: [Social]
+      summary: Remove a like (idempotent)
+      parameters:
+        - {$ref: "#/components/parameters/PostId"}
+      responses:
+        "204": {description: "Not liked any more, also when it was not liked before."}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+  /posts/{id}/comments:
+    post:
+      tags: [Social]
+      summary: Add a comment
+      parameters:
+        - {$ref: "#/components/parameters/PostId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CommentInput"}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Comment"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+    get:
+      tags: [Social]
+      summary: List the comments of a post, oldest first
+      parameters:
+        - {$ref: "#/components/parameters/PostId"}
+      responses:
+        "200":
+          description: All comments, oldest first; `items` is `[]` when there are none
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CommentList"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+  /users/{id}/follow:
+    put:
+      tags: [Social]
+      summary: Follow a user (idempotent)
+      parameters:
+        - {$ref: "#/components/parameters/UserId"}
+      responses:
+        "204": {description: Following. Following twice keeps one follow.}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+    delete:
+      tags: [Social]
+      summary: Unfollow a user (idempotent)
+      parameters:
+        - {$ref: "#/components/parameters/UserId"}
+      responses:
+        "204": {description: "Not following, also when you were not following before."}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/Unavailable"}
+  /feed:
+    get:
+      tags: [Feed]
+      summary: Posts of the users you follow, newest first
+      description: |
+        Ordered by (created_at, id) descending. Your own posts are not included.
+        Cursor paging never repeats or skips a post, even when several posts share one `created_at`.
+        In the microservice build with `FEED_MODE=event` the feed is eventually consistent:
+        a new like or post may take a moment to show up.
+      parameters:
+        - name: limit
+          in: query
+          description: Page size, default 20. A value above 50 is clamped to 50. Not an integer, or below 1, is 400.
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+        - name: before
+          in: query
+          description: Opaque cursor, the `next` of the previous page. A malformed value is 400.
+          schema: {type: string}
+      responses:
+        "200":
+          description: One page of the feed
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/FeedPage"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "503": {$ref: "#/components/responses/Unavailable"}
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    PostId:
+      name: id
+      in: path
+      required: true
+      description: Post id. Not a positive integer, or no such post, is 404.
+      schema: {type: integer, format: int64, minimum: 1}
+    UserId:
+      name: id
+      in: path
+      required: true
+      description: User id. Not a positive integer, or no such user, is 404. Following yourself is 400.
+      schema: {type: integer, format: int64, minimum: 1}
   responses:
     BadRequest:
-      description: 400 Bad request
+      description: 400 Malformed or invalid input (see the route description)
       content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
     Unauthorized:
       description: 401 Missing, invalid or expired token; or wrong login
@@ -106,12 +257,94 @@ components:
       description: 409 Username already taken
       content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
     Unavailable:
-      description: 503 A service this route depends on is down
+      description: 503 The database or a service this route depends on is down
       content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
     PayloadTooLarge:
-      description: 413 Image larger than 5MB
+      description: 413 Image larger than 5 MiB. Nothing is stored.
       content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}
   schemas:
+    Credentials:
+      type: object
+      required: [username, password]
+      properties:
+        username: {type: string, minLength: 1, example: an}
+        password:
+          type: string
+          minLength: 1
+          description: At most 72 bytes (bcrypt); longer is 400.
+          example: pw123456
+    User:
+      type: object
+      required: [id, username]
+      properties:
+        id: {type: integer, format: int64, example: 7}
+        username: {type: string, example: an}
+    Token:
+      type: object
+      required: [token]
+      properties:
+        token: {type: string, description: "JWT HS256, valid for 24 hours"}
+    Post:
+      type: object
+      required: [id, author, caption, image_url, created_at]
+      properties:
+        id: {type: integer, format: int64, example: 42}
+        author: {type: string, description: Username of the author, example: an}
+        caption: {type: string, maxLength: 500}
+        image_url:
+          type: string
+          format: uri
+          description: Signed, time-limited URL (1 hour) that the host machine can open.
+        created_at: {type: string, format: date-time}
+    CommentInput:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: Must contain a non-whitespace character. The body is at most 64 KiB.
+          example: nice photo
+    Comment:
+      type: object
+      required: [id, post_id, author, text, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        post_id: {type: integer, format: int64}
+        author: {type: string, description: Username of the commenter}
+        text: {type: string}
+        created_at: {type: string, format: date-time}
+    CommentList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/Comment"}
+    FeedItem:
+      type: object
+      required: [id, author, caption, image_url, likes, comments, liked_by_me, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        author: {type: string, description: Username of the author}
+        caption: {type: string}
+        image_url: {type: string, format: uri, description: "Signed, time-limited URL (1 hour)"}
+        likes: {type: integer, minimum: 0}
+        comments: {type: integer, minimum: 0}
+        liked_by_me: {type: boolean, description: Computed for the user making the request}
+        created_at: {type: string, format: date-time}
+    FeedPage:
+      type: object
+      required: [items, next]
+      properties:
+        items:
+          type: array
+          description: Never null; `[]` when the feed is empty
+          items: {$ref: "#/components/schemas/FeedItem"}
+        next:
+          type: string
+          nullable: true
+          description: Cursor for the next page (pass as `before`); null on the last page
     Error:
       type: object
       required: [error]
