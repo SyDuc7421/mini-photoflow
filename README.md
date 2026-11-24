@@ -7,7 +7,7 @@ Công nghệ: Go, Postgres, MinIO, Docker Compose; bản microservice thêm gRPC
 ## Repo có gì
 
 ```
-api/openapi.yaml          hợp đồng REST dùng chung cho cả hai bản
+api/                      openapi.yaml (hợp đồng REST dùng chung cho cả hai bản) và compose của Swagger UI
 tests/contract/           bộ test e2e, chạy được trên cả hai bản bằng BASE_URL
 internal/                 package Go dùng chung (apierr, jwtutil, cursor, events, grpcutil, dbutil)
 scripts/                  sinh proto, failure.sh (tắt một service), bench-feed.sh (đo độ trễ feed)
@@ -23,7 +23,7 @@ microservices/            bản microservice
 | App phải làm gì, các quy tắc và tiêu chí chấp nhận | [docs/SPEC.md](docs/SPEC.md) |
 | Hai bản được tổ chức thế nào và so sánh ra sao | [docs/ARCHITEC.md](docs/ARCHITEC.md) |
 | Nhìn kiến trúc bằng sơ đồ (mở trong trình duyệt) | [docs/architecture.html](docs/architecture.html) |
-| Danh sách route, request và response | [api/openapi.yaml](api/openapi.yaml) |
+| Danh sách route, request và response | [api/openapi.yaml](api/openapi.yaml), hoặc xem và thử bằng Swagger UI (xem "Bắt đầu") |
 | Lý do thiết kế và kế hoạch triển khai | `docs/superpowers/specs/`, `docs/superpowers/plans/` |
 
 ## Trạng thái
@@ -59,7 +59,12 @@ BASE_URL=http://localhost:8080 go test -count=1 ./tests/contract/... -v
 
 # đo độ trễ GET /feed trên bản đang lên
 ./scripts/bench-feed.sh 200
+
+# Swagger UI cho bản đang chạy ở :8080 (monolith hoặc microservice): mở http://localhost:8081
+docker compose -f api/docker-compose.yml up -d
 ```
+
+Swagger UI đọc `api/openapi.yaml`. Để gọi thử: `POST /register`, rồi `POST /login`, dán token vào nút Authorize. Trình duyệt gọi API qua `http://localhost:8082`, một nginx nhỏ chuyển tiếp tới cổng 8080 của máy và thêm header CORS, nên không phải sửa code của hai bản. Tắt bằng `docker compose -f api/docker-compose.yml down`.
 
 Postgres của microservice chạy 4 database (`auth`, `post`, `social`, `feed`), mỗi cái một role riêng. Script khởi tạo `microservices/initdb/init.sql` chỉ chạy lần đầu; sau khi sửa nó, hoặc khi đổi `FEED_MODE` giữa `sync` và `event`, chạy `docker compose -f microservices/docker-compose.yml down -v` (xem "Giới hạn" bên dưới).
 
